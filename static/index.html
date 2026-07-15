@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grok CLI Proxy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Login splash -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <h1>GrokProxy</h1>
+        <p class="login-sub">Sign in to manage the account pool</p>
+      </div>
+      <form id="loginForm" class="login-form" autocomplete="on">
+        <label class="login-label" for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" class="input login-input" placeholder="Admin password" autocomplete="current-password" autofocus />
+        <div id="loginError" class="login-error"></div>
+        <button type="submit" id="loginBtn" class="btn btn-primary w-full login-submit">Sign in</button>
+      </form>
+      <p class="login-hint">Proxy clients still use API keys. This password is dashboard-only.</p>
+    </div>
+  </div>
+
+  <div id="appRoot" class="app-root" style="display:none">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <span class="brand-text">GrokProxy</span>
+        <button id="logoutBtn" class="btn-icon logout-btn" title="Sign out">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-title">ENDPOINT URL</div>
+        <div class="endpoint-box">
+          <code id="endpointBase">loading...</code>
+          <button id="copyBase" class="btn-icon" title="Copy URL">
+             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-title">QUICK IMPORT</div>
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-hint">Drop JSON file(s) here</div>
+          <textarea id="importBox" placeholder="Or paste JSON array or object..."></textarea>
+        </div>
+        <div class="import-actions">
+          <button id="importBtn" class="btn btn-primary w-full">Import from Paste</button>
+          <div id="importMsg" class="msg-text"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section log-section">
+        <div class="section-header">
+          <div class="section-title">LIVE ACTIVITY</div>
+          <button id="clearLog" class="btn-icon" title="Clear log">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="log-container" id="logContent"></div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      
+      <header class="top-header">
+        <div class="header-stats" id="stats">
+          <!-- JS injects stats -->
+        </div>
+        <div class="header-models" id="modelChips">
+          <!-- JS injects models -->
+        </div>
+      </header>
+
+      <div class="content-wrapper">
+        
+        <!-- Accounts Panel -->
+        <div class="panel accounts-panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Account Pool</h2>
+              <p class="panel-desc">Manage proxy round-robin rotation</p>
+            </div>
+            <div class="filters">
+              <div class="search-box">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input id="q" placeholder="Search email..." />
+              </div>
+              <select id="statusFilter" class="select-sm">
+                <option value="">All Status</option>
+                <option value="active">Active</option>
+                <option value="exhausted">Exhausted</option>
+                <option value="dead">Dead</option>
+                <option value="error">Error</option>
+              </select>
+              <select id="enabledFilter" class="select-sm">
+                <option value="">All States</option>
+                <option value="1">Enabled</option>
+                <option value="0">Disabled</option>
+              </select>
+              <button id="reload" class="btn btn-outline btn-icon" title="Reload Accounts">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="toolbar-wrapper">
+            <div class="progress-bar-wrap" id="progressWrap" style="display:none">
+              <div class="progress-info"><span id="progressLabel">Refreshing...</span> <span id="progressCount" class="muted"></span></div>
+              <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+            </div>
+            <div class="toolbar">
+              <div class="tool-group">
+                <button data-act="refresh-selected" class="btn btn-secondary btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> Refresh</button>
+                <button data-act="refresh-active" class="btn btn-ghost btn-sm">Active</button>
+                <button data-act="refresh-exhausted" class="btn btn-ghost btn-sm">Exhausted</button>
+                <button data-act="refresh-all" class="btn btn-ghost btn-sm">All</button>
+              </div>
+              <div class="tool-group">
+                <button data-act="warmup-selected" class="btn btn-secondary btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> Warmup</button>
+                <button data-act="warmup-active" class="btn btn-ghost btn-sm">Active</button>
+                <button data-act="warmup-exhausted" class="btn btn-ghost btn-sm">Exhausted</button>
+                <button data-act="warmup-all" class="btn btn-ghost btn-sm">All</button>
+              </div>
+              <div class="tool-group">
+                <button data-act="disable-exhausted" class="btn btn-secondary btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="6" width="22" height="12" rx="6" ry="6"></rect><circle cx="8" cy="12" r="2"></circle></svg> Toggle</button>
+                <button data-act="enable-exhausted" class="btn btn-ghost btn-sm">En Exhausted</button>
+                <button data-act="disable-selected" class="btn btn-ghost btn-sm">Dis Selected</button>
+                <button data-act="enable-selected" class="btn btn-ghost btn-sm">En Selected</button>
+              </div>
+              <div class="tool-group">
+                <button data-act="select-exhausted" class="btn btn-secondary btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg> Select Exhausted</button>
+                <button data-act="delete-selected" class="btn btn-danger btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg> Delete Selected</button>
+                <button data-act="disable-dead" class="btn btn-ghost btn-sm">Disable Dead</button>
+                <button data-act="delete-dead" class="btn btn-ghost btn-sm">Delete Dead</button>
+              </div>
+            </div>
+            <div id="actionMsg" class="action-alert"></div>
+          </div>
+
+          <div class="table-container accounts-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th width="32" class="text-center"><input type="checkbox" id="checkAll" /></th>
+                  <th>Account</th>
+                  <th width="90">Status</th>
+                  <th width="50" class="text-center">State</th>
+                  <th>Timeline</th>
+                  <th width="80">Usage</th>
+                  <th>Error Log</th>
+                  <th width="100" class="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- API Keys Panel -->
+        <div class="panel keys-panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">API Keys</h2>
+              <p class="panel-desc">Manage access tokens for clients</p>
+            </div>
+            <button id="reloadKeys" class="btn btn-outline btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg></button>
+          </div>
+          
+          <div class="key-creator">
+            <input id="newKeyName" placeholder="Key name..." class="input" />
+            <input id="newKeyNote" placeholder="Notes (optional)..." class="input" />
+            <button id="createKeyBtn" class="btn btn-primary">Generate Key</button>
+          </div>
+          <div id="createKeyMsg" class="msg-text"></div>
+
+          <div class="table-container mt-4">
+            <table class="data-table compact">
+              <thead>
+                <tr>
+                  <th>Identity</th>
+                  <th>Secret Key</th>
+                  <th width="60" class="text-center">State</th>
+                  <th width="200" class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="keysBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
