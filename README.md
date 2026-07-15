@@ -12,7 +12,7 @@ docker run -d -p 8787:8787 -v ./data:/app/data -v ./config.json:/app/config.json
 Or without Docker (Windows):
 
 ```powershell
-git clone https://github.com/raviakbar97/grok-cli-proxy.git
+git clone https://github.com/dudevkit/grok-cli-proxy.git
 cd grok-cli-proxy
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
@@ -24,7 +24,7 @@ copy config.example.json config.json
 Or Linux/Mac:
 
 ```bash
-git clone https://github.com/raviakbar97/grok-cli-proxy.git
+git clone https://github.com/dudevkit/grok-cli-proxy.git
 cd grok-cli-proxy
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
