@@ -9,10 +9,24 @@ docker build -t grok-cli-proxy .
 docker run -d -p 8787:8787 -v ./data:/app/data -v ./config.json:/app/config.json grok-cli-proxy
 ```
 
-Or without Docker:
+Or without Docker (Windows):
+
+```powershell
+git clone https://github.com/raviakbar97/grok-cli-proxy.git
+cd grok-cli-proxy
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+copy config.example.json config.json
+# edit config.json → ganti admin_password dan api_key
+.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8787
+```
+
+Or Linux/Mac:
 
 ```bash
-python -m venv .venv
+git clone https://github.com/raviakbar97/grok-cli-proxy.git
+cd grok-cli-proxy
+python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp config.example.json config.json
 # edit config.json → set admin_password and api_key
