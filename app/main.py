@@ -788,7 +788,7 @@ async def responses_alias(request: Request, auth: dict = Depends(require_api_key
 
 
 @app.get("/api/models")
-async def models_alias(_: bool = Depends(require_api_key)):
+async def models_alias(_: dict = Depends(require_admin)):
     # static list based on 9router sniff
     return {
         "object": "list",
