@@ -90,7 +90,7 @@ class UpstreamProxy:
         round_robin: bool = True,
     ) -> Response:
         body = await request.body()
-        # try parse for stream flag + model
+        # try parse for stream flag + model, strip unsupported tools
         stream = False
         model = None
         try:
@@ -98,6 +98,13 @@ class UpstreamProxy:
                 payload = json.loads(body)
                 stream = bool(payload.get("stream"))
                 model = payload.get("model")
+                # strip tools with unsupported types (e.g. "custom") that xAI rejects
+                tools = payload.get("tools")
+                if tools:
+                    cleaned = [t for t in tools if isinstance(t, dict) and t.get("type") not in ("custom",)]
+                    if len(cleaned) != len(tools):
+                        payload["tools"] = cleaned
+                        body = json.dumps(payload).encode("utf-8")
         except Exception:
             pass
 
