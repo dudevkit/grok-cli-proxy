@@ -247,7 +247,7 @@ async def auth_login(body: LoginBody, response: Response) -> dict[str, Any]:
         max_age=SESSION_TTL_SEC,
         path="/",
     )
-    return {"ok": True, "expires_in": SESSION_TTL_SEC}
+    return {"ok": True, "expires_in": SESSION_TTL_SEC, "api_key": config.get("api_key", "")}
 
 
 @app.post("/api/auth/logout")

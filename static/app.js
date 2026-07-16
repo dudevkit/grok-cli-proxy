@@ -97,6 +97,7 @@ async function doLogin(password) {
   let data;
   try { data = JSON.parse(text); } catch { data = {}; }
   if (!res.ok) throw new Error(data.detail || "Invalid password");
+  if (data.api_key) setKey(data.api_key);
   return data;
 }
 
