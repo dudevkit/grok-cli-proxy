@@ -651,16 +651,16 @@ async def _warmup(account_id: str) -> dict:
                     await backoff_sleep(attempt, max_sec=30)
                     continue
                 if resp.status_code == 403:
-                    text = (await resp.aread()).decode("utf-8", "replace")[:300]
-                    db.mark_status(account_id, "exhausted", error=text)
+                    text = (await resp.aread()).decode("utf-8", "replace")[:296]
+                    db.mark_status(account_id, "exhausted", error=f"403: {text}")
                     return {"ok": False, "status": "exhausted", "body": text}
                 if resp.status_code == 401:
-                    text = (await resp.aread()).decode("utf-8", "replace")[:300]
-                    db.mark_status(account_id, "dead", error=text)
+                    text = (await resp.aread()).decode("utf-8", "replace")[:296]
+                    db.mark_status(account_id, "dead", error=f"401: {text}")
                     return {"ok": False, "status": "dead", "body": text}
                 if resp.status_code >= 400:
-                    text = (await resp.aread()).decode("utf-8", "replace")[:300]
-                    db.mark_status(account_id, "error", error=text)
+                    text = (await resp.aread()).decode("utf-8", "replace")[:296]
+                    db.mark_status(account_id, "error", error=f"{resp.status_code}: {text}")
                     return {"ok": False, "status": "error", "code": resp.status_code, "body": text}
 
                 content = ""

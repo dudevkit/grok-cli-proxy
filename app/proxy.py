@@ -172,18 +172,18 @@ class UpstreamProxy:
                             await backoff_sleep(attempt, max_sec=timeout)
                             continue
                         if err_cls == "exhausted":
-                            self.db.mark_status(acc["id"], "exhausted", error=raw[:300])
+                            self.db.mark_status(acc["id"], "exhausted", error=f"{upstream.status_code}: {raw[:296]}")
                             log_req(403, ms, f"exhausted: {email_acc}")
                             continue
                         if err_cls == "dead":
-                            self.db.mark_status(acc["id"], "dead", error=raw[:300])
+                            self.db.mark_status(acc["id"], "dead", error=f"{upstream.status_code}: {raw[:296]}")
                             log_req(401, ms, f"dead: {email_acc}")
                             continue
                         if err_cls == "auth" and refresh_service is not None:
                             await refresh_service.refresh_one(acc)
                             log_req(401, ms, f"auth retry: {email_acc}")
                             continue
-                        self.db.mark_status(acc["id"], "error", error=raw[:300])
+                        self.db.mark_status(acc["id"], "error", error=f"{upstream.status_code}: {raw[:296]}")
                         log_req(upstream.status_code, ms, raw[:100])
                         return Response(
                             content=raw,
@@ -241,18 +241,18 @@ class UpstreamProxy:
                         await backoff_sleep(attempt, max_sec=timeout)
                         continue
                     if err_cls == "exhausted":
-                        self.db.mark_status(acc["id"], "exhausted", error=text[:300])
+                        self.db.mark_status(acc["id"], "exhausted", error=f"{upstream.status_code}: {text[:296]}")
                         log_req(403, ms, f"exhausted: {email_acc}")
                         continue
                     if err_cls == "dead":
-                        self.db.mark_status(acc["id"], "dead", error=text[:300])
+                        self.db.mark_status(acc["id"], "dead", error=f"{upstream.status_code}: {text[:296]}")
                         log_req(401, ms, f"dead: {email_acc}")
                         continue
                     if err_cls == "auth" and refresh_service is not None:
                         await refresh_service.refresh_one(acc)
                         log_req(401, ms, f"auth retry: {email_acc}")
                         continue
-                    self.db.mark_status(acc["id"], "error", error=text[:300])
+                    self.db.mark_status(acc["id"], "error", error=f"{upstream.status_code}: {text[:296]}")
                     log_req(upstream.status_code, ms, text[:100])
                     return Response(
                         content=raw,
