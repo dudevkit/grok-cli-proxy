@@ -203,6 +203,11 @@ async def ui_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/logs", response_class=HTMLResponse)
+async def ui_logs() -> FileResponse:
+    return FileResponse(STATIC_DIR / "logs.html")
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     ok, msg = db.integrity_ok()

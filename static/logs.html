@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Activity Log — GrokProxy</title>
+<style>
+:root {
+  --bg: #000; --surface: #0a0a0a; --border: #222; --text: #ededed;
+  --secondary: #a1a1aa; --tertiary: #71717a;
+  --success: #10b981; --warning: #f59e0b; --danger: #ef4444; --info: #3b82f6;
+  --font: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --radius: 6px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px; height: 100vh; display: flex; flex-direction: column;
+}
+/* Top bar */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 20px; border-bottom: 1px solid var(--border);
+  background: var(--surface); flex-shrink: 0;
+}
+.topbar .brand { font-weight: 600; font-size: 14px; }
+.topbar a { color: var(--secondary); text-decoration: none; font-size: 12px; }
+.topbar a:hover { color: var(--text); }
+.spacer { flex: 1; }
+.topbar .controls { display: flex; gap: 8px; align-items: center; }
+.ctrl-btn {
+  padding: 4px 10px; font-size: 11px; font-weight: 500;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: transparent; color: var(--secondary); cursor: pointer;
+  font-family: inherit;
+}
+.ctrl-btn:hover { color: var(--text); border-color: var(--tertiary); }
+.ctrl-btn.active { background: var(--success); color: #000; border-color: var(--success); }
+.ctrl-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+.badge-count {
+  font-size: 11px; color: var(--tertiary);
+  font-family: var(--font); font-variant-numeric: tabular-nums;
+}
+/* Filters */
+.filters {
+  display: flex; gap: 8px; padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface); flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.filter-btn {
+  padding: 2px 8px; font-size: 11px; border-radius: 4px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--tertiary); cursor: pointer; font-family: inherit;
+}
+.filter-btn:hover { color: var(--secondary); }
+.filter-btn.on { color: var(--text); border-color: var(--tertiary); }
+.filter-btn.all { border-color: var(--info); color: var(--info); }
+.filter-btn.err { border-color: var(--danger); color: var(--danger); }
+.filter-btn.ok { border-color: var(--success); color: var(--success); }
+.filter-btn.ref { border-color: var(--warning); color: var(--warning); }
+.search-input {
+  padding: 3px 10px; font-size: 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--bg); color: var(--text);
+  font-family: var(--font); outline: none; width: 200px;
+}
+.search-input:focus { border-color: var(--tertiary); }
+/* Log container */
+.log-wrap {
+  flex: 1; overflow-y: auto; padding: 8px 0;
+  font-family: var(--font); font-size: 12px; line-height: 1.5;
+}
+.log-wrap::-webkit-scrollbar { width: 4px; }
+.log-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+/* Log table */
+.log-table { width: 100%; border-collapse: collapse; }
+.log-table th {
+  position: sticky; top: 0; z-index: 10;
+  padding: 6px 12px; font-size: 10px; font-weight: 600;
+  color: var(--tertiary); text-transform: uppercase; letter-spacing: 0.04em;
+  text-align: left; background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.log-table td { padding: 4px 12px; vertical-align: middle; border-bottom: none; white-space: nowrap; }
+.log-row:hover td { background: rgba(255,255,255,0.02); }
+.log-row.filtered { display: none; }
+/* Columns */
+.col-time { width: 65px; color: var(--tertiary); font-size: 11px; }
+.col-type { width: 60px; }
+.col-status { width: 40px; }
+.col-dur { width: 60px; color: var(--tertiary); font-size: 11px; }
+.col-tokens { width: 50px; color: var(--tertiary); font-size: 11px; }
+.col-model { width: 100px; color: var(--secondary); font-size: 11px; }
+.col-account { width: 140px; color: var(--secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.col-msg { min-width: 100px; color: var(--secondary); font-size: 11px; white-space: normal; }
+/* Badges */
+.badge {
+  display: inline-flex; align-items: center; padding: 1px 6px;
+  border-radius: 3px; font-size: 10px; font-weight: 600; line-height: 1.4;
+}
+.badge.method { font-family: var(--font); }
+.badge.method-get { background: rgba(59,130,246,0.12); color: var(--info); }
+.badge.method-post { background: rgba(16,185,129,0.12); color: var(--success); }
+.badge.method-put { background: rgba(245,158,11,0.12); color: var(--warning); }
+.badge.method-delete { background: rgba(239,68,68,0.12); color: var(--danger); }
+.badge.status { font-family: var(--font); }
+.badge.st-2xx { background: rgba(16,185,129,0.12); color: var(--success); }
+.badge.st-3xx { background: rgba(245,158,11,0.12); color: var(--warning); }
+.badge.st-4xx { background: rgba(239,68,68,0.12); color: var(--danger); }
+.badge.st-5xx { background: rgba(239,68,68,0.15); color: #f43f5e; }
+.badge.st-ok { background: rgba(16,185,129,0.12); color: var(--success); }
+.badge.st-err { background: rgba(239,68,68,0.12); color: var(--danger); }
+.badge.event { font-family: var(--font); }
+.badge.event-refresh { background: rgba(245,158,11,0.12); color: var(--warning); }
+.badge.event-warmup { background: rgba(59,130,246,0.12); color: var(--info); }
+.badge.event-fallback { background: rgba(139,92,246,0.12); color: #a78bfa; }
+.badge.event-auth { background: rgba(239,68,68,0.12); color: var(--danger); }
+.badge.event-other { background: rgba(255,255,255,0.05); color: var(--tertiary); }
+/* Empty */
+.empty-msg { padding: 40px; text-align: center; color: var(--tertiary); font-size: 13px; }
+/* Bottom bar */
+.bottombar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 20px; border-top: 1px solid var(--border);
+  background: var(--surface); flex-shrink: 0; font-size: 11px; color: var(--tertiary);
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">GrokProxy</span>
+  <a href="/">← Dashboard</a>
+  <span class="spacer"></span>
+  <span class="badge-count" id="logCount">0 events</span>
+  <div class="controls">
+    <button class="ctrl-btn" id="pauseBtn">⏸ Pause</button>
+    <button class="ctrl-btn danger" id="clearBtn">✕ Clear</button>
+  </div>
+</div>
+
+<div class="filters">
+  <button class="filter-btn all on" data-filter="all">All</button>
+  <button class="filter-btn ok" data-filter="ok">OK</button>
+  <button class="filter-btn err" data-filter="err">Error</button>
+  <button class="filter-btn ref" data-filter="refresh">Refresh</button>
+  <span class="spacer"></span>
+  <input class="search-input" id="searchInput" placeholder="Search account, model, message..." spellcheck="false">
+</div>
+
+<div class="log-wrap" id="logWrap">
+  <table class="log-table" id="logTable">
+    <thead>
+      <tr>
+        <th class="col-time">Time</th>
+        <th class="col-type">Type</th>
+        <th class="col-status">St</th>
+        <th class="col-dur">Dur</th>
+        <th class="col-tokens">Tk</th>
+        <th class="col-model">Model</th>
+        <th class="col-account">Account</th>
+        <th class="col-msg">Message</th>
+      </tr>
+    </thead>
+    <tbody id="logBody"></tbody>
+  </table>
+  <div class="empty-msg" id="emptyMsg">Waiting for events...</div>
+</div>
+
+<div class="bottombar">
+  <span id="wsStatus">● Connected</span>
+  <span id="filterStatus"></span>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/log`;
+
+let paused = false;
+let events = [];
+let filter = "all";
+let search = "";
+
+function fmtTime(ts) {
+  const d = new Date((ts || 0) * 1000);
+  return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function statusClass(st) {
+  if (!st && st !== 0) return "";
+  if (st < 300) return "st-2xx";
+  if (st < 400) return "st-3xx";
+  if (st < 500) return "st-4xx";
+  return "st-5xx";
+}
+
+function statusBadge(st) {
+  if (st == null) return "";
+  const cls = statusClass(st);
+  return `<span class="badge status ${cls}">${st}</span>`;
+}
+
+function methodBadge(m) {
+  if (!m) return "";
+  return `<span class="badge method method-${m.toLowerCase()}">${m}</span>`;
+}
+
+function eventBadge(kind) {
+  let cls = "event-other";
+  let label = kind || "event";
+  const k = (kind || "").toLowerCase();
+  if (k.includes("refresh")) { cls = "event-refresh"; label = "REFRESH"; }
+  else if (k.includes("warmup")) { cls = "event-warmup"; label = "WARMUP"; }
+  else if (k.includes("fallback")) { cls = "event-fallback"; label = "FALLBACK"; }
+  else if (k.includes("auth")) { cls = "event-auth"; label = "AUTH"; }
+  else if (k.includes("proxy")) { 
+    if (k.includes("ok")) label = "OK";
+    else label = "ERR";
+  }
+  return `<span class="badge event ${cls}">${label}</span>`;
+}
+
+function renderEvent(e) {
+  const kind = (e.kind || "").toLowerCase();
+  const isProxy = kind.includes("proxy_ok") || kind.includes("proxy_err") || kind.includes("proxy");
+  const isRefresh = kind.includes("refresh");
+  const isWarmup = kind.includes("warmup");
+  
+  let typeCell = "";
+  let statusCell = "";
+  let durCell = "";
+  let tkCell = "";
+  let modelCell = "";
+  let accountCell = e.account || "";
+  let msgCell = e.message || "";
+  
+  if (isProxy && e.method) {
+    typeCell = methodBadge(e.method);
+    statusCell = statusBadge(e.status);
+    durCell = e.duration_ms ? `${(e.duration_ms / 1000).toFixed(1)}s` : "";
+    tkCell = e.tokens ? `${e.tokens}tk` : "";
+    modelCell = e.model || "";
+  } else if (isRefresh) {
+    typeCell = eventBadge("refresh");
+    statusCell = e.status ? statusBadge(e.status) : kind.includes("ok") ? `<span class="badge status st-2xx">OK</span>` : `<span class="badge status st-4xx">FAIL</span>`;
+  } else if (isWarmup) {
+    typeCell = eventBadge("warmup");
+    statusCell = kind.includes("ok") ? `<span class="badge status st-2xx">OK</span>` : `<span class="badge status st-4xx">FAIL</span>`;
+  } else {
+    typeCell = eventBadge(kind);
+  }
+  
+  if (e.duration_ms && !isProxy) {
+    durCell = `${(e.duration_ms / 1000).toFixed(1)}s`;
+  }
+  
+  const time = fmtTime(e.ts);
+  
+  return `<tr class="log-row ${statusCell ? 'has-status' : ''}" data-kind="${kind}" data-status="${e.status || ''}" data-account="${(accountCell || '').toLowerCase()}" data-model="${(e.model || '').toLowerCase()}" data-msg="${(e.message || '').toLowerCase()}">
+    <td class="col-time">${time}</td>
+    <td class="col-type">${typeCell}</td>
+    <td class="col-status">${statusCell}</td>
+    <td class="col-dur">${durCell}</td>
+    <td class="col-tokens">${tkCell}</td>
+    <td class="col-model">${modelCell}</td>
+    <td class="col-account" title="${accountCell}">${accountCell}</td>
+    <td class="col-msg">${escapeHtml(msgCell)}</td>
+  </tr>`;
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function applyFilters() {
+  const rows = $("logBody").querySelectorAll(".log-row");
+  let visible = 0;
+  for (const row of rows) {
+    let show = true;
+    if (filter === "ok") show = row.dataset.status && parseInt(row.dataset.status) < 400;
+    else if (filter === "err") show = row.dataset.status && parseInt(row.dataset.status) >= 400;
+    else if (filter === "refresh") show = row.dataset.kind && row.dataset.kind.includes("refresh");
+    
+    if (show && search) {
+      const q = search.toLowerCase();
+      show = (row.dataset.account || "").includes(q) ||
+             (row.dataset.model || "").includes(q) ||
+             (row.dataset.msg || "").includes(q);
+    }
+    
+    row.classList.toggle("filtered", !show);
+    if (show) visible++;
+  }
+  $("filterStatus").textContent = filter !== "all" || search ? `Showing ${visible}/${rows.length}` : "";
+}
+
+function addEvent(e) {
+  if (e.kind === "ping") return;
+  events.push(e);
+  const tr = document.createElement("tr");
+  tr.innerHTML = renderEvent(e);
+  $("logBody").appendChild(tr);
+  $("logCount").textContent = `${events.length} events`;
+  $("emptyMsg").style.display = "none";
+  
+  applyFilters();
+  
+  if (!paused) {
+    const wrap = $("logWrap");
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+}
+
+async function preload() {
+  try {
+    const data = await fetch("/api/events?limit=200").then(r => r.json());
+    const rows = data.events || [];
+    for (const e of rows) {
+      addEvent({ kind: e.kind || "event", message: e.message || "", ts: e.ts || 0 });
+    }
+  } catch {}
+}
+
+function clearLog() {
+  events = [];
+  $("logBody").innerHTML = "";
+  $("logCount").textContent = "0 events";
+  $("emptyMsg").style.display = "block";
+}
+
+function connectWs() {
+  const ws = new WebSocket(WS_URL);
+  ws.onopen = () => { $("wsStatus").textContent = "● Connected"; $("wsStatus").style.color = "var(--success)"; };
+  ws.onclose = () => {
+    $("wsStatus").textContent = "● Disconnected (reconnecting...)";
+    $("wsStatus").style.color = "var(--danger)";
+    setTimeout(connectWs, 2000);
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      addEvent(data);
+    } catch {}
+  };
+}
+
+// Filter buttons
+document.querySelectorAll(".filter-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("on"));
+    btn.classList.add("on");
+    filter = btn.dataset.filter;
+    applyFilters();
+  };
+});
+
+$("searchInput").oninput = () => {
+  search = $("searchInput").value.trim();
+  applyFilters();
+};
+
+$("pauseBtn").onclick = () => {
+  paused = !paused;
+  $("pauseBtn").textContent = paused ? "▶ Resume" : "⏸ Pause";
+  $("pauseBtn").classList.toggle("active", paused);
+  if (!paused) {
+    const wrap = $("logWrap");
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+};
+
+$("clearBtn").onclick = clearLog;
+
+preload();
+connectWs();
+</script>
+</body>
+</html>
