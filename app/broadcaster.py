@@ -48,6 +48,7 @@ class LogBroadcaster:
         *,
         method: str | None = None,
         path: str | None = None,
+        url: str | None = None,
         status: int | None = None,
         account: str | None = None,
         account_id: str | None = None,
@@ -65,6 +66,8 @@ class LogBroadcaster:
             entry["method"] = method
         if path:
             entry["path"] = path
+        if url:
+            entry["url"] = url
         if status is not None:
             entry["status"] = status
         if account:

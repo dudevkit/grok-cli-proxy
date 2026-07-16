@@ -147,6 +147,7 @@ class UpstreamProxy:
                         err or f"{request.method} {path}",
                         method=request.method,
                         path=f"/{path}",
+                        url=url,
                         status=status,
                         account=email_acc,
                         duration_ms=dur,
