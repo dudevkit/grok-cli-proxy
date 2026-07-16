@@ -105,6 +105,7 @@ async function doLogout() {
   try {
     await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
   } catch {}
+  setKey("");
   showLogin("");
 }
 
