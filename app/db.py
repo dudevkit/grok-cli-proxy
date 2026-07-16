@@ -203,6 +203,10 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def clear_events(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM events")
+
     def add_event(
         self,
         kind: str,

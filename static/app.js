@@ -630,6 +630,7 @@ tbody.addEventListener("click", async (e) => {
 
 $("clearLog").onclick = () => {
   logContent.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Log cleared</div>';
+  fetch("/api/events/clear", { method: "POST" }).catch(() => {});
 };
 
 // Init

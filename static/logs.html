@@ -331,6 +331,7 @@ function clearLog() {
   $("logConsole").innerHTML = "";
   $("logCount").textContent = "0 events";
   $("emptyMsg").style.display = "block";
+  fetch("/api/events/clear", { method: "POST" }).catch(() => {});
 }
 
 function connectWs() {

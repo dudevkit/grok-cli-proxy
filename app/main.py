@@ -268,6 +268,12 @@ async def list_events(limit: int = 120, _: dict = Depends(require_admin)) -> dic
     return {"events": rows}
 
 
+@app.post("/api/events/clear")
+async def clear_events(_: dict = Depends(require_admin)) -> dict[str, Any]:
+    db.clear_events()
+    return {"ok": True}
+
+
 @app.websocket("/ws/log")
 async def ws_log(ws: WebSocket):
     await ws.accept()
