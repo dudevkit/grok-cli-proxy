@@ -152,6 +152,20 @@ class UpstreamProxy:
                 total_tokens=u.get("total_tokens", 0),
                 ok=ok,
             )
+            # Also write to events table so Full Log page shows requests
+            ms = f"{duration_ms:.0f}" if duration_ms is not None else "-"
+            tok = u.get("total_tokens", 0) or (u.get("input_tokens", 0) + u.get("output_tokens", 0)) or 0
+            status_icon = "✓" if ok and status < 400 else "✗"
+            msg = (
+                f"{status_icon} {status} {model or '?'} "
+                f"{tok} tok  {ms}ms  {path}"
+            )
+            self.db.add_event(
+                kind="request",
+                message=msg,
+                account_id=acc.get("id"),
+                email=acc.get("email"),
+            )
         except Exception:
             log.exception("failed to record usage account=%s", acc.get("email"))
 
@@ -464,7 +478,17 @@ class UpstreamProxy:
         last_err = None
         fixed_acc = None  # for non-round-robin mode, lock to one account
         tried: set[str] = set()  # account IDs already attempted
-        
+
+        if self.bc:
+            self.bc.log(
+                "proxy_req",
+                f"{request.method} /{path.lstrip('/')}" + (" [stream]" if stream else ""),
+                method=request.method,
+                path=f"/{path.lstrip('/')}",
+                status=0,
+                model=model,
+            )
+
         for attempt in range(100 if round_robin else 1):
             if round_robin:
                 acc = self.db.pick_active_round_robin()
@@ -485,6 +509,17 @@ class UpstreamProxy:
             email_acc = acc.get("email", "?")
             url = f"{self.base}/{path.lstrip('/')}"
             headers = self._headers(acc, model=model)
+
+            if self.bc:
+                self.bc.log(
+                    "proxy_try",
+                    f"trying {email_acc}",
+                    method=request.method,
+                    path=f"/{path.lstrip('/')}",
+                    status=0,
+                    account=email_acc,
+                    model=model,
+                )
             try:
                 client_override = request.headers.get("x-grok-model-override")
                 if client_override:
@@ -523,19 +558,27 @@ class UpstreamProxy:
                         err_cls = self._classify_error(upstream.status_code, raw)
                         if upstream.status_code == 429:
                             log_req(429, ms, "rate limited")
+                            if self.bc:
+                                self.bc.log("proxy_fallback", f"rate limited, trying next", method=request.method, path=f"/{path}", status=429, account=email_acc, model=model)
                             await backoff_sleep(attempt, max_sec=timeout)
                             continue
                         if err_cls == "exhausted":
                             self.db.mark_status(acc["id"], "exhausted", error=f"{upstream.status_code}: {raw[:296]}")
                             log_req(403, ms, f"exhausted: {email_acc}")
+                            if self.bc:
+                                self.bc.log("proxy_fallback", f"exhausted {email_acc}, trying next", method=request.method, path=f"/{path}", status=403, account=email_acc, model=model)
                             continue
                         if err_cls == "dead":
                             self.db.mark_status(acc["id"], "dead", error=f"{upstream.status_code}: {raw[:296]}")
                             log_req(401, ms, f"dead: {email_acc}")
+                            if self.bc:
+                                self.bc.log("proxy_fallback", f"dead {email_acc}, trying next", method=request.method, path=f"/{path}", status=401, account=email_acc, model=model)
                             continue
                         if err_cls == "auth" and refresh_service is not None:
                             await refresh_service.refresh_one(acc)
                             log_req(401, ms, f"auth retry: {email_acc}")
+                            if self.bc:
+                                self.bc.log("proxy_fallback", f"auth error {email_acc}, refreshing & retrying", method=request.method, path=f"/{path}", status=401, account=email_acc, model=model)
                             continue
                         self.db.mark_status(acc["id"], "error", error=f"{upstream.status_code}: {raw[:296]}")
                         log_req(upstream.status_code, ms, raw[:100])
@@ -611,19 +654,27 @@ class UpstreamProxy:
                     err_cls = self._classify_error(upstream.status_code, text)
                     if upstream.status_code == 429:
                         log_req(429, ms, "rate limited")
+                        if self.bc:
+                            self.bc.log("proxy_fallback", f"rate limited, trying next", method=request.method, path=f"/{path}", status=429, account=email_acc, model=model)
                         await backoff_sleep(attempt, max_sec=timeout)
                         continue
                     if err_cls == "exhausted":
                         self.db.mark_status(acc["id"], "exhausted", error=f"{upstream.status_code}: {text[:296]}")
                         log_req(403, ms, f"exhausted: {email_acc}")
+                        if self.bc:
+                            self.bc.log("proxy_fallback", f"exhausted {email_acc}, trying next", method=request.method, path=f"/{path}", status=403, account=email_acc, model=model)
                         continue
                     if err_cls == "dead":
                         self.db.mark_status(acc["id"], "dead", error=f"{upstream.status_code}: {text[:296]}")
                         log_req(401, ms, f"dead: {email_acc}")
+                        if self.bc:
+                            self.bc.log("proxy_fallback", f"dead {email_acc}, trying next", method=request.method, path=f"/{path}", status=401, account=email_acc, model=model)
                         continue
                     if err_cls == "auth" and refresh_service is not None:
                         await refresh_service.refresh_one(acc)
                         log_req(401, ms, f"auth retry: {email_acc}")
+                        if self.bc:
+                            self.bc.log("proxy_fallback", f"auth error {email_acc}, refreshing & retrying", method=request.method, path=f"/{path}", status=401, account=email_acc, model=model)
                         continue
                     self.db.mark_status(acc["id"], "error", error=f"{upstream.status_code}: {text[:296]}")
                     log_req(upstream.status_code, ms, text[:100])

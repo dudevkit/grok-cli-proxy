@@ -20,6 +20,7 @@ from .client import HttpClient, backoff_sleep
 from .db import Database
 from .proxy import UpstreamProxy
 from .refresh import RefreshService
+from .warmup import WarmupService
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
@@ -65,6 +66,7 @@ db = Database(config["db_path"])
 http_client = HttpClient(config)
 broadcaster = LogBroadcaster()
 refresh_svc = RefreshService(db, config, http_client, broadcaster)
+warmup_svc = WarmupService(db, config, http_client, broadcaster, refresh_svc)
 proxy = UpstreamProxy(db, config, http_client, broadcaster)
 server_start = time.time()
 
@@ -375,13 +377,19 @@ async def list_accounts(
     elif enabled in ("0", "false", "False"):
         en = False
     rows = db.list_accounts(status=status or None, enabled=en, q=q or None)
-    # redact tokens in list view
+    # redact secrets in list view
     safe = []
     for r in rows:
         item = dict(r)
         item["access_token"] = (item.get("access_token") or "")[:16] + "..."
         item["refresh_token"] = (item.get("refresh_token") or "")[:12] + "..."
         item["id_token"] = (item.get("id_token") or "")[:12] + ("..." if item.get("id_token") else "")
+        pw = item.get("password") or ""
+        item["has_password"] = bool(pw)
+        item["password"] = ("*" * min(8, len(pw))) if pw else ""
+        # avoid shipping full raw_json (may contain password/tokens)
+        if "raw_json" in item:
+            item.pop("raw_json", None)
         safe.append(item)
     return {"accounts": safe, "stats": db.stats()}
 
@@ -430,7 +438,7 @@ async def _import_one(raw: dict[str, Any], *, index: int | None = None, file: st
         acc2 = db.get_account(acc["id"])
         if not acc2:
             return {**meta, "ok": False, "error": "account missing after refresh", "_counter": "error"}
-        w = await _warmup(acc2["id"])
+        w = await warmup_svc.warmup_one(acc2["id"], do_refresh=False)
         status = (w or {}).get("status", "error")
         db.add_event(
             "import",
@@ -617,128 +625,29 @@ async def delete_accounts(body: IdsBody, _: dict = Depends(require_admin)):
     return {"deleted": n, "stats": db.stats()}
 
 
-async def _warmup(account_id: str) -> dict:
-    """Warmup via real chat call. Must get a reply before marking active."""
-    acc = db.get_account(account_id)
-    if not acc:
-        return {"ok": False, "error": "not found"}
-
-    ver = config.get("client_version", "0.2.99")
-    model = config.get("warmup_model", "grok-4.5")
-    headers = {
-        "Authorization": f"Bearer {acc['access_token']}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": config.get(
-            "user_agent", f"grok-pager/{ver} grok-shell/{ver} (linux; x86_64)"
-        ),
-        "X-XAI-Token-Auth": "xai-grok-cli",
-        "x-xai-token-auth": "xai-grok-cli",
-        "x-grok-client-identifier": config.get("client_identifier", "grok-pager"),
-        "x-grok-client-version": ver,
-        "x-grok-model-override": model,
-        "x-authenticateresponse": "authenticate-response",
-    }
-    if acc.get("email"):
-        headers["x-email"] = acc["email"]
-    uid = acc.get("sub") or acc.get("user_id") or acc.get("principal_id")
-    if uid:
-        headers["x-userid"] = str(uid)
-    if acc.get("team_id"):
-        headers["x-teamid"] = str(acc["team_id"])
-
-    url = (
-        config.get("upstream_base", "https://cli-chat-proxy.grok.com/v1").rstrip("/")
-        + "/chat/completions"
-    )
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "say only: halo"}],
-        "max_tokens": 4,
-        "stream": True,
-    }
-    for attempt in range(4):
-        try:
-            async with http_client.client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code == 429:
-                    await backoff_sleep(attempt, max_sec=30)
-                    continue
-                if resp.status_code == 403:
-                    text = (await resp.aread()).decode("utf-8", "replace")[:296]
-                    db.mark_status(account_id, "exhausted", error=f"403: {text}")
-                    return {"ok": False, "status": "exhausted", "body": text}
-                if resp.status_code == 401:
-                    text = (await resp.aread()).decode("utf-8", "replace")[:296]
-                    db.mark_status(account_id, "dead", error=f"401: {text}")
-                    return {"ok": False, "status": "dead", "body": text}
-                if resp.status_code >= 400:
-                    text = (await resp.aread()).decode("utf-8", "replace")[:296]
-                    db.mark_status(account_id, "error", error=f"{resp.status_code}: {text}")
-                    return {"ok": False, "status": "error", "code": resp.status_code, "body": text}
-
-                content = ""
-                total_tokens = 0
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data: "):
-                        data = line[6:].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            js = json.loads(data)
-                        except Exception:
-                            continue
-                        choices = js.get("choices") or []
-                        if choices:
-                            delta = choices[0].get("delta") or {}
-                            msg = choices[0].get("message") or {}
-                            piece = delta.get("content") or msg.get("content") or ""
-                            if piece:
-                                content += piece
-                        usage = js.get("usage") or {}
-                        if usage.get("total_tokens"):
-                            total_tokens = int(usage["total_tokens"])
-
-                content = content.strip()
-                if not content:
-                    db.mark_status(account_id, "error", error="empty chat reply")
-                    return {"ok": False, "status": "error", "error": "empty chat reply"}
-
-                if total_tokens > 0:
-                    db.add_tokens_used(account_id, total_tokens)
-
-                db.mark_status(account_id, "active")
-                db.mark_success(account_id)
-                return {
-                    "ok": True,
-                    "status": "active",
-                    "reply": content[:80],
-                    "tokens": total_tokens,
-                }
-        except Exception as e:
-            if attempt < 3:
-                await backoff_sleep(attempt, max_sec=10)
-                continue
-            db.mark_status(account_id, "error", error=str(e))
-            return {"ok": False, "error": str(e)}
-    return {"ok": False, "error": "warmup exhausted retries"}
-
-
 @app.post("/api/accounts/{account_id}/warmup")
 async def warmup_one_route(account_id: str, _: dict = Depends(require_admin)):
     acc = db.get_account(account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="not found")
-    r = await refresh_svc.refresh_one(acc)
-    if not r.get("ok"):
-        return {"ok": False, "refresh": r}
-    return await _warmup(account_id)
+    return await warmup_svc.warmup_one(account_id, do_refresh=True)
 
 
 @app.get("/api/accounts/action-progress")
 async def action_progress(_: dict = Depends(require_admin)):
-    return refresh_svc.progress
+    # Prefer active warmup progress, else refresh/import progress
+    if warmup_svc.progress.get("running"):
+        p = dict(warmup_svc.progress)
+        p["can_stop"] = True
+        return p
+    p = dict(refresh_svc.progress)
+    p["can_stop"] = False
+    return p
+
+
+@app.post("/api/warmup/stop")
+async def warmup_stop(_: dict = Depends(require_admin)):
+    return warmup_svc.request_stop()
 
 
 @app.post("/api/warmup")
@@ -749,33 +658,20 @@ async def warmup_many(body: IdsBody, _: dict = Depends(require_admin)):
     if not ids:
         ids = db.ids_by_filter("active")
     # filter out disabled
-    ids = [i for i in ids if db.get_account(i).get("enabled", 1)]
-    results = []
-    ok = fail = 0
-    db.add_event("warmup", f"warmup count={len(ids)} mode={body.mode or 'ids'}")
-    # set progress
-    refresh_svc.progress.update({"running": True, "total": len(ids), "done": 0, "errors": 0, "label": "Warming up..."})
-    for i, acc_id in enumerate(ids):
-        acc = db.get_account(acc_id)
-        if not acc:
-            fail += 1
-            results.append({"id": acc_id, "ok": False, "error": "not found"})
-            continue
-        r = await refresh_svc.refresh_one(acc)
-        if not r.get("ok"):
-            fail += 1
-            results.append({"id": acc_id, "ok": False, "refresh": r})
-        else:
-            w = await _warmup(acc_id)
-            if w.get("ok"):
-                ok += 1
-            else:
-                fail += 1
-            results.append({"id": acc_id, **w})
-        refresh_svc.progress.update({"done": i + 1, "errors": fail, "label": f"Warming up {i+1}/{len(ids)}"})
-    refresh_svc.progress.update({"running": False, "label": f"Warmup done: {ok} ok, {fail} fail"})
-    db.add_event("warmup_done", f"success={ok} failed={fail}")
-    return {"success": ok, "failed": fail, "results": results, "stats": db.stats()}
+    ids = [
+        i
+        for i in ids
+        if (a := db.get_account(i)) and a.get("enabled", 1)
+    ]
+    if not ids:
+        return {"success": 0, "failed": 0, "results": [], "stats": db.stats()}
+    if warmup_svc.progress.get("running"):
+        raise HTTPException(status_code=409, detail="warmup already running")
+    return await warmup_svc.warmup_many(
+        ids,
+        do_refresh=True,
+        label=f"Warming up {len(ids)} accounts...",
+    )
 
 
 # ---- OpenAI-compatible proxy surface ----

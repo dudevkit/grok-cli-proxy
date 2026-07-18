@@ -15,5 +15,6 @@
   "user_agent": "grok-pager/0.2.99 grok-shell/0.2.99 (linux; x86_64)",
   "warmup_model": "grok-4.5",
   "refresh_concurrency": 100,
-  "import_concurrency": 30
+  "import_concurrency": 30,
+  "warmup_concurrency": 10
 }

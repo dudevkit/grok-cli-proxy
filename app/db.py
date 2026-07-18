@@ -51,6 +51,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS accounts (
                   id TEXT PRIMARY KEY,
                   email TEXT NOT NULL UNIQUE,
+                  password TEXT,
                   display_name TEXT,
                   status TEXT NOT NULL DEFAULT 'active',
                   enabled INTEGER NOT NULL DEFAULT 1,
@@ -127,6 +128,13 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_request_logs_ok ON request_logs(ok);
                 """
             )
+            # migrations for existing DBs
+            cols = {
+                r[1]
+                for r in conn.execute("PRAGMA table_info(accounts)").fetchall()
+            }
+            if "password" not in cols:
+                conn.execute("ALTER TABLE accounts ADD COLUMN password TEXT")
             # rr pointer
             row = conn.execute("SELECT value FROM meta WHERE key='rr_index'").fetchone()
             if not row:
@@ -281,15 +289,16 @@ class Database:
             return self._hydrate_account(row)
 
     def _normalize_cpa(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Accept flat CPA or nested {email, tokens:{...}} harvest format."""
+        """Accept flat CPA or nested harvest:
+        {email, password, given_name, family_name, tokens:{...}, smoke, ...}
+        """
         if not isinstance(payload, dict):
             raise ValueError("account must be an object")
         p = dict(payload)
         tokens = p.get("tokens")
         if isinstance(tokens, dict):
-            # nested harvest format — tokens fields win for auth, outer for meta
+            # outer meta (email/password/name) wins; token fields fill auth
             merged = {**tokens, **{k: v for k, v in p.items() if k != "tokens"}}
-            # prefer token fields from nested tokens when outer lacks them
             for k in (
                 "access_token",
                 "refresh_token",
@@ -301,6 +310,8 @@ class Database:
                 "auth_mode",
                 "token_type",
                 "sub",
+                "team_id",
+                "principal_id",
             ):
                 if not merged.get(k) and tokens.get(k):
                     merged[k] = tokens[k]
@@ -310,7 +321,14 @@ class Database:
                 merged["access_token"] = tokens.get("access_token") or tokens.get("accessToken")
             if not merged.get("refresh_token"):
                 merged["refresh_token"] = tokens.get("refresh_token") or tokens.get("refreshToken")
+            if not merged.get("id_token"):
+                merged["id_token"] = tokens.get("id_token") or tokens.get("idToken")
+            if not merged.get("team_id") and tokens.get("team_id"):
+                merged["team_id"] = tokens["team_id"]
             p = merged
+        # password may live at top-level only (never inside tokens usually)
+        if not p.get("password") and payload.get("password"):
+            p["password"] = payload.get("password")
         return p
 
     def upsert_from_cpa(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -323,6 +341,7 @@ class Database:
         if not access or not refresh:
             raise ValueError("access_token and refresh_token required")
 
+        password = str(payload.get("password") or payload.get("pass") or "").strip() or None
         id_token = payload.get("id_token") or payload.get("idToken") or ""
         expires_in = int(payload.get("expires_in") or payload.get("expiresIn") or 21600)
         expires_at = (
@@ -334,9 +353,12 @@ class Database:
             expires_at = datetime.fromtimestamp(
                 time.time() + expires_in, tz=timezone.utc
             ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        given = str(payload.get("given_name") or payload.get("givenName") or "").strip()
+        family = str(payload.get("family_name") or payload.get("familyName") or "").strip()
         display = (
             payload.get("displayName")
             or payload.get("display_name")
+            or (" ".join(x for x in (given, family) if x).strip() or None)
             or email.split("@")[0]
         )
         # pull sub/principal from id_token JWT payload if missing
@@ -364,22 +386,33 @@ class Database:
                 "SELECT COALESCE(MAX(priority),0) FROM accounts"
             ).fetchone()[0]
             acc_id = str(uuid.uuid4())
-            # stash team_id into raw_json only (column may not exist)
+            # stash team_id + password into raw_json (password also column)
             raw_store = dict(payload)
             if team_id and "team_id" not in raw_store:
                 raw_store["team_id"] = team_id
+            if password and not raw_store.get("password"):
+                raw_store["password"] = password
+            # never dump huge nested smoke/activate bodies into logs later
+            for heavy in ("smoke", "activate", "signup"):
+                if heavy in raw_store and isinstance(raw_store[heavy], dict):
+                    raw_store[heavy] = {
+                        k: raw_store[heavy].get(k)
+                        for k in ("ok", "status", "http_status", "cf_blocked", "tries")
+                        if k in raw_store[heavy]
+                    }
             conn.execute(
                 """
                 INSERT INTO accounts(
-                  id,email,display_name,status,enabled,priority,
+                  id,email,password,display_name,status,enabled,priority,
                   access_token,refresh_token,id_token,token_type,
                   expires_in,expires_at,scope,sub,client_id,base_url,
                   raw_json,created_at,updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     acc_id,
                     email,
+                    password,
                     display,
                     "active",
                     1,

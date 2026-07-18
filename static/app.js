@@ -8,6 +8,7 @@ const progressWrap = $("progressWrap");
 const progressFill = $("progressFill");
 const progressLabel = $("progressLabel");
 const progressCount = $("progressCount");
+const progressStopBtn = $("progressStopBtn");
 
 const DEFAULT_MODELS = [
   { id: "grok-4.5", name: "Grok 4.5" },
@@ -241,8 +242,14 @@ async function pollProgress() {
       progressFill.style.width = pct + "%";
       progressLabel.textContent = p.label || "Working...";
       progressCount.textContent = `${p.done}/${p.total}`;
+      if (progressStopBtn) {
+        progressStopBtn.style.display = p.can_stop ? "inline-flex" : "none";
+        progressStopBtn.disabled = !!p.cancelled;
+        progressStopBtn.textContent = p.cancelled ? "Stopping..." : "Stop";
+      }
     } else {
       progressWrap.style.display = "none";
+      if (progressStopBtn) progressStopBtn.style.display = "none";
       if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     }
   } catch {}
@@ -257,6 +264,24 @@ function startProgressPoll() {
 // start progress poll on every action
 function triggerProgress() {
   startProgressPoll();
+}
+
+if (progressStopBtn) {
+  progressStopBtn.onclick = async () => {
+    progressStopBtn.disabled = true;
+    progressStopBtn.textContent = "Stopping...";
+    try {
+      await api("/api/warmup/stop", { method: "POST", body: "{}" });
+      triggerProgress();
+    } catch (e) {
+      progressStopBtn.disabled = false;
+      progressStopBtn.textContent = "Stop";
+      if (actionMsg) {
+        actionMsg.textContent = e.message || String(e);
+        actionMsg.style.display = "block";
+      }
+    }
+  };
 }
 
 async function reload() {

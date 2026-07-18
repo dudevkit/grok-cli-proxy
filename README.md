@@ -52,15 +52,27 @@ Open `http://127.0.0.1:8787` — sign in with `admin_password`. Default password
 
 Flat:
 ```json
-{"email": "u@h.com", "access_token": "...", "refresh_token": "...", "id_token": "..."}
+{"email": "u@h.com", "password": "...", "access_token": "...", "refresh_token": "...", "id_token": "..."}
 ```
 
-Or nested (harvest format):
+Or nested harvest format (email/password outer + tokens object):
 ```json
-{"email": "u@h.com", "tokens": {"access_token": "...", "refresh_token": "..."}}
+{
+  "email": "u@h.com",
+  "password": "...",
+  "given_name": "Alex",
+  "family_name": "Anderson",
+  "tokens": {
+    "access_token": "...",
+    "refresh_token": "...",
+    "id_token": "...",
+    "team_id": "...",
+    "expires_at": "..."
+  }
+}
 ```
 
-Arrays accepted for bulk. Drag-drop `.json` files or paste raw JSON.
+Password is stored per account in DB (for future reauth). Arrays accepted for bulk. Drag-drop `.json` files or paste raw JSON.
 
 ## Proxy usage
 
