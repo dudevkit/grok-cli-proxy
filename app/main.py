@@ -310,11 +310,13 @@ async def public_config(request: Request) -> dict[str, Any]:
             "models": f"{base}/v1/models",
             "responses": f"{base}/v1/responses",
             "chat_completions": f"{base}/v1/chat/completions",
+            "images_generations": f"{base}/v1/images/generations",
             "openai_base": f"{base}/v1",
         },
         "curl_examples": {
             "responses": f"curl {base}/v1/responses -H \"Authorization: Bearer <API_KEY>\" -H \"Content-Type: application/json\" -d \"{{\\\"model\\\":\\\"grok-4.5\\\",\\\"input\\\":\\\"hi\\\"}}\"",
             "chat": f"curl {base}/v1/chat/completions -H \"Authorization: Bearer <API_KEY>\" -H \"Content-Type: application/json\" -d \"{{\\\"model\\\":\\\"grok-4.5\\\",\\\"messages\\\":[{{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"hi\\\"}}]}}\"",
+            "images": f"curl {base}/v1/images/generations -H \"Authorization: Bearer <API_KEY>\" -H \"Content-Type: application/json\" -d \"{{\\\"model\\\":\\\"grok-4.5\\\",\\\"prompt\\\":\\\"a red apple\\\",\\\"n\\\":1}}\"",
         },
         "refresh_interval_sec": config.get("refresh_interval_sec", 300),
         "upstream_base": config.get("upstream_base"),
@@ -777,8 +779,53 @@ async def warmup_many(body: IdsBody, _: dict = Depends(require_admin)):
 
 
 # ---- OpenAI-compatible proxy surface ----
+def require_proxy_or_session(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+):
+    """API key (proxy clients) OR dashboard session cookie."""
+    if verify_session_token(request.cookies.get(SESSION_COOKIE)):
+        return {"type": "session", "round_robin": True}
+    return require_api_key(authorization=authorization, x_api_key=x_api_key)
+
+
+@app.post("/v1/images/generations")
+async def images_generations(request: Request, auth: dict = Depends(require_proxy_or_session)):
+    """OpenAI-like image generation via Grok CLI free responses + image_generation tool."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="malformed JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+    if body.get("image") is not None or body.get("images") is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="image edits not supported on /v1/images/generations",
+        )
+    return await proxy.generate_images(
+        body,
+        refresh_service=refresh_svc,
+        round_robin=auth.get("round_robin", True),
+    )
+
+
 @app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def v1_proxy(path: str, request: Request, auth: dict = Depends(require_api_key)):
+    # Dedicated image route is registered above; keep generic proxy for the rest.
+    if path.lstrip("/") == "images/generations":
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="malformed JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="request body must be an object")
+        return await proxy.generate_images(
+            body,
+            refresh_service=refresh_svc,
+            round_robin=auth.get("round_robin", True),
+        )
     return await proxy.forward(request, path, refresh_service=refresh_svc, round_robin=auth.get("round_robin", True))
 
 
@@ -797,5 +844,21 @@ async def models_alias(_: dict = Depends(require_admin)):
             {"id": "grok-4.5-high", "object": "model"},
             {"id": "grok-4.5-medium", "object": "model"},
             {"id": "grok-4.5-low", "object": "model"},
+            {"id": "grok-imagine", "object": "model"},
         ],
     }
+
+
+@app.get("/api/usage/overview")
+async def usage_overview(date: str | None = None, _: dict = Depends(require_admin)):
+    return db.usage_overview(date)
+
+
+@app.get("/api/usage/requests")
+async def usage_requests(
+    date: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    _: dict = Depends(require_admin),
+):
+    return db.list_request_logs(day=date, limit=limit, offset=offset)

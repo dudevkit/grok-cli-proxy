@@ -32,57 +32,47 @@
 
   <div id="appRoot" class="app-root" style="display:none">
     
-    <!-- Sidebar -->
+    <!-- Sidebar nav -->
     <aside class="sidebar">
       <div class="sidebar-brand">
         <div class="logo">
           <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         </div>
         <span class="brand-text">GrokProxy</span>
-        <button id="logoutBtn" class="btn-icon logout-btn" title="Sign out">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#setup" class="nav-item active" data-page="setup">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Setup
+        </a>
+        <a href="#usage" class="nav-item" data-page="usage">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+          Usage
+        </a>
+        <a href="#images" class="nav-item" data-page="images">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          Image Gen
+        </a>
+        <a href="/logs" class="nav-item" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Full Log
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="logoutBtn" class="nav-item logout-nav" title="Sign out">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Sign out
         </button>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="section-title">ENDPOINT URL</div>
-        <div class="endpoint-box">
-          <code id="endpointBase">loading...</code>
-          <button id="copyBase" class="btn-icon" title="Copy URL">
-             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-        </div>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="section-title">QUICK IMPORT</div>
-        <div class="drop-zone" id="dropZone">
-          <div class="drop-hint">Drop JSON file(s) here</div>
-          <textarea id="importBox" placeholder="Or paste JSON array or object..."></textarea>
-        </div>
-        <div class="import-actions">
-          <button id="importBtn" class="btn btn-primary w-full">Import from Paste</button>
-          <div id="importMsg" class="msg-text"></div>
-        </div>
-      </div>
-
-      <div class="sidebar-section log-section">
-        <div class="section-header">
-          <div class="section-title">LIVE ACTIVITY</div>
-          <div style="display:flex;gap:6px;align-items:center">
-            <a href="/logs" class="btn btn-secondary btn-sm" style="text-decoration:none">Full Log</a>
-            <button id="clearLog" class="btn-icon" title="Clear log">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-          </button>
-          </div>
-        </div>
-        <div class="log-container" id="logContent"></div>
       </div>
     </aside>
 
     <!-- Main Content -->
     <main class="main-content">
-      
+
+      <!-- Setup page -->
+      <div id="pageSetup" class="page-view active">
       <header class="top-header">
         <div class="header-stats" id="stats">
           <!-- JS injects stats -->
@@ -93,9 +83,52 @@
       </header>
 
       <div class="content-wrapper">
+
+        <!-- Setup: Endpoint + Import -->
+        <section id="setup" class="setup-grid">
+          <div class="panel card-panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Connection</h2>
+                <p class="panel-desc">OpenAI-compatible base URL for clients</p>
+              </div>
+            </div>
+            <div class="endpoint-card">
+              <label class="field-label">Base URL</label>
+              <div class="endpoint-box">
+                <code id="endpointBase">loading...</code>
+                <button id="copyBase" class="btn-icon" title="Copy URL">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+              </div>
+              <div class="endpoint-meta">
+                <div class="meta-row"><span class="meta-k">Auth</span><span class="meta-v">Bearer &lt;API_KEY&gt;</span></div>
+                <div class="meta-row"><span class="meta-k">Chat</span><span class="meta-v mono-text">/v1/chat/completions</span></div>
+                <div class="meta-row"><span class="meta-k">Responses</span><span class="meta-v mono-text">/v1/responses</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel card-panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Import accounts</h2>
+                <p class="panel-desc">Drop CPA JSON or paste account payload</p>
+              </div>
+            </div>
+            <div class="drop-zone" id="dropZone">
+              <div class="drop-hint">Drop JSON file(s) here</div>
+              <textarea id="importBox" placeholder="Or paste JSON array or object..."></textarea>
+            </div>
+            <div class="import-actions">
+              <button id="importBtn" class="btn btn-primary">Import accounts</button>
+              <div id="importMsg" class="msg-text"></div>
+            </div>
+          </div>
+        </section>
         
         <!-- Accounts Panel -->
-        <div class="panel accounts-panel">
+        <div id="accounts" class="panel accounts-panel">
           <div class="panel-header">
             <div>
               <h2 class="panel-title">Account Pool</h2>
@@ -178,7 +211,7 @@
         </div>
 
         <!-- API Keys Panel -->
-        <div class="panel keys-panel">
+        <div id="keys" class="panel keys-panel">
           <div class="panel-header">
             <div>
               <h2 class="panel-title">API Keys</h2>
@@ -210,7 +243,217 @@
         </div>
 
       </div>
+      </div>
+
+      <!-- Usage page -->
+      <div id="pageUsage" class="page-view">
+        <div class="usage-page">
+          <div class="usage-page-header">
+            <div>
+              <h2 class="panel-title">Usage</h2>
+              <p class="panel-desc">Token &amp; request analytics for today (UTC)</p>
+            </div>
+            <div class="segmented" id="usageTabSwitch" role="tablist">
+              <button type="button" class="segment active" data-usage-tab="overview">Overview</button>
+              <button type="button" class="segment" data-usage-tab="details">Details</button>
+            </div>
+          </div>
+
+          <div id="usageOverview" class="usage-tab active">
+            <div class="usage-stat-grid">
+              <div class="usage-stat-card">
+                <div class="usage-stat-label">Total requests</div>
+                <div class="usage-stat-val" id="usageTotalReq">0</div>
+              </div>
+              <div class="usage-stat-card">
+                <div class="usage-stat-label">Input tokens</div>
+                <div class="usage-stat-val" id="usageInputTok">0</div>
+              </div>
+              <div class="usage-stat-card">
+                <div class="usage-stat-label">Cached tokens</div>
+                <div class="usage-stat-val" id="usageCachedTok">0</div>
+              </div>
+              <div class="usage-stat-card">
+                <div class="usage-stat-label">Output tokens</div>
+                <div class="usage-stat-val" id="usageOutputTok">0</div>
+              </div>
+            </div>
+
+            <div class="usage-main-row">
+              <div class="panel card-panel usage-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 class="panel-title" style="font-size:14px">Token usage</h3>
+                    <p class="panel-desc">Hourly total · 00:00 – 23:00 UTC</p>
+                  </div>
+                  <div class="usage-chart-meta" id="usageChartMeta"></div>
+                </div>
+                <div class="usage-chart-wrap" id="usageChart"></div>
+              </div>
+
+              <div class="panel card-panel usage-recent-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 class="panel-title" style="font-size:14px">Recent requests</h3>
+                    <p class="panel-desc">Latest proxy traffic today</p>
+                  </div>
+                </div>
+                <div class="recent-list" id="usageRecent">
+                  <div class="empty-state">No requests yet today</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="usageDetails" class="usage-tab">
+            <div class="panel card-panel">
+              <div class="panel-header">
+                <div>
+                  <h3 class="panel-title" style="font-size:14px">Request log</h3>
+                  <p class="panel-desc">Full request list for today</p>
+                </div>
+                <button id="reloadUsageDetails" class="btn btn-outline btn-sm">Refresh</button>
+              </div>
+              <div class="table-container">
+                <table class="data-table compact">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Model</th>
+                      <th class="text-right">Input</th>
+                      <th class="text-right">Cached</th>
+                      <th class="text-right">Output</th>
+                      <th class="text-right">Total</th>
+                      <th>Account</th>
+                      <th width="70" class="text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usageDetailsBody"></tbody>
+                </table>
+              </div>
+              <div id="usageDetailsMsg" class="msg-text" style="margin-top:10px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image Generation page -->
+      <div id="pageImages" class="page-view">
+        <div class="images-page">
+          <div class="usage-page-header">
+            <div>
+              <h2 class="panel-title">Image Generation</h2>
+              <p class="panel-desc">OpenAI-compatible image generation surface</p>
+            </div>
+            <div class="images-endpoint-pill">
+              <span class="meta-k">POST</span>
+              <code class="mono-text">/v1/images/generations</code>
+            </div>
+          </div>
+
+          <div class="images-layout">
+            <div class="panel card-panel images-form-card">
+              <div class="panel-header">
+                <div>
+                  <h3 class="panel-title" style="font-size:14px">Generate</h3>
+                  <p class="panel-desc">Prompt + generation options</p>
+                </div>
+              </div>
+
+              <label class="field-label" for="imgPrompt">Prompt</label>
+              <textarea id="imgPrompt" class="img-prompt" rows="5" placeholder="Describe the image you want to generate..."></textarea>
+
+              <div class="img-options-grid">
+                <div class="img-field">
+                  <label class="field-label" for="imgModel">Model</label>
+                  <select id="imgModel" class="select-sm img-select">
+                    <option value="grok-4.5" selected>grok-4.5</option>
+                    <option value="grok-imagine">grok-imagine (alias)</option>
+                  </select>
+                </div>
+                <div class="img-field">
+                  <label class="field-label" for="imgSize">Size</label>
+                  <select id="imgSize" class="select-sm img-select">
+                    <option value="1024x1024">1024 × 1024</option>
+                    <option value="1024x1792">1024 × 1792</option>
+                    <option value="1792x1024">1792 × 1024</option>
+                    <option value="512x512">512 × 512</option>
+                  </select>
+                </div>
+                <div class="img-field">
+                  <label class="field-label" for="imgN">Count</label>
+                  <select id="imgN" class="select-sm img-select">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                </div>
+                <div class="img-field">
+                  <label class="field-label" for="imgQuality">Quality</label>
+                  <select id="imgQuality" class="select-sm img-select">
+                    <option value="standard">Standard</option>
+                    <option value="hd">HD</option>
+                  </select>
+                </div>
+              </div>
+
+              <label class="field-label" for="imgNegative">Negative prompt <span class="muted">(optional)</span></label>
+              <input id="imgNegative" class="input" type="text" placeholder="Things to avoid..." />
+
+              <div class="img-form-actions">
+                <button id="imgGenerateBtn" class="btn btn-primary" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  Generate
+                </button>
+                <button id="imgClearBtn" class="btn btn-outline" type="button">Clear</button>
+              </div>
+              <div id="imgMsg" class="msg-text"></div>
+
+              <div class="img-payload-box">
+                <div class="field-label">Request payload preview</div>
+                <pre id="imgPayloadPreview" class="img-payload-pre">{}</pre>
+              </div>
+            </div>
+
+            <div class="panel card-panel images-gallery-card">
+              <div class="panel-header">
+                <div>
+                  <h3 class="panel-title" style="font-size:14px">Results</h3>
+                  <p class="panel-desc">Generated images appear here</p>
+                </div>
+                <span class="usage-chart-meta" id="imgResultMeta">0 images</span>
+              </div>
+              <div id="imgGallery" class="img-gallery">
+                <div class="img-empty">
+                  <div class="img-empty-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  </div>
+                  <div class="empty-state" style="padding:8px 0 0;margin:0">No images yet. Write a prompt and generate.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
+
+    <!-- Live Activity rail -->
+    <aside id="activityRail" class="activity-rail">
+      <div class="activity-header">
+        <button id="toggleActivity" class="activity-toggle" title="Collapse activity">
+          <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          <span class="activity-title">Live Activity</span>
+        </button>
+        <div class="activity-actions">
+          <a href="/logs" class="btn btn-secondary btn-sm activity-full-log" style="text-decoration:none">Full Log</a>
+          <button id="clearLog" class="btn-icon" title="Clear log">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+      </div>
+      <div class="log-container" id="logContent"></div>
+    </aside>
   </div>
   <script src="/static/app.js"></script>
 </body>

@@ -107,6 +107,24 @@ class Database:
                   note TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_api_keys_enabled ON api_keys(enabled);
+
+                CREATE TABLE IF NOT EXISTS request_logs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  created_at TEXT NOT NULL,
+                  account_id TEXT,
+                  email TEXT,
+                  model TEXT,
+                  path TEXT,
+                  status_code INTEGER,
+                  duration_ms REAL,
+                  input_tokens INTEGER NOT NULL DEFAULT 0,
+                  output_tokens INTEGER NOT NULL DEFAULT 0,
+                  cached_tokens INTEGER NOT NULL DEFAULT 0,
+                  total_tokens INTEGER NOT NULL DEFAULT 0,
+                  ok INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE INDEX IF NOT EXISTS idx_request_logs_created ON request_logs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_request_logs_ok ON request_logs(ok);
                 """
             )
             # rr pointer
@@ -569,6 +587,154 @@ class Database:
                 "UPDATE accounts SET tokens_used=tokens_used+? WHERE id=?",
                 (tokens, account_id),
             )
+
+    def log_request(
+        self,
+        *,
+        account_id: str | None = None,
+        email: str | None = None,
+        model: str | None = None,
+        path: str | None = None,
+        status_code: int | None = None,
+        duration_ms: float | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_tokens: int = 0,
+        total_tokens: int = 0,
+        ok: bool = True,
+    ) -> None:
+        now = utc_now()
+        inp = max(0, int(input_tokens or 0))
+        out = max(0, int(output_tokens or 0))
+        cached = max(0, int(cached_tokens or 0))
+        total = max(0, int(total_tokens or 0))
+        if total <= 0:
+            total = inp + out
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO request_logs(
+                  created_at, account_id, email, model, path, status_code,
+                  duration_ms, input_tokens, output_tokens, cached_tokens,
+                  total_tokens, ok
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    now,
+                    account_id,
+                    email,
+                    model,
+                    path,
+                    status_code,
+                    duration_ms,
+                    inp,
+                    out,
+                    cached,
+                    total,
+                    1 if ok else 0,
+                ),
+            )
+
+    def usage_overview(self, day: str | None = None) -> dict[str, Any]:
+        """day = YYYY-MM-DD (UTC). Default: today UTC."""
+        if not day:
+            day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        start = f"{day}T00:00:00.000Z"
+        end = f"{day}T23:59:59.999Z"
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT
+                  COUNT(*) AS total_requests,
+                  COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                  COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                  COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                  COALESCE(SUM(total_tokens), 0) AS total_tokens
+                FROM request_logs
+                WHERE ok=1 AND created_at >= ? AND created_at <= ?
+                """,
+                (start, end),
+            ).fetchone()
+            recent = self._conn.execute(
+                """
+                SELECT id, created_at, account_id, email, model, path,
+                       status_code, duration_ms, input_tokens, output_tokens,
+                       cached_tokens, total_tokens, ok
+                FROM request_logs
+                WHERE created_at >= ? AND created_at <= ?
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (start, end),
+            ).fetchall()
+            hourly_rows = self._conn.execute(
+                """
+                SELECT CAST(substr(created_at, 12, 2) AS INTEGER) AS hour,
+                       COALESCE(SUM(total_tokens), 0) AS tokens,
+                       COUNT(*) AS requests
+                FROM request_logs
+                WHERE ok=1 AND created_at >= ? AND created_at <= ?
+                GROUP BY hour
+                ORDER BY hour
+                """,
+                (start, end),
+            ).fetchall()
+        hour_map = {int(r["hour"]): int(r["tokens"] or 0) for r in hourly_rows if r["hour"] is not None}
+        hourly = [
+            {"hour": h, "label": f"{h:02d}:00", "tokens": hour_map.get(h, 0)}
+            for h in range(24)
+        ]
+        return {
+            "date": day,
+            "total_requests": int(row["total_requests"] or 0),
+            "input_tokens": int(row["input_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cached_tokens": int(row["cached_tokens"] or 0),
+            "total_tokens": int(row["total_tokens"] or 0),
+            "hourly": hourly,
+            "recent": [dict(r) for r in recent],
+        }
+
+    def list_request_logs(
+        self,
+        *,
+        day: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        if not day:
+            day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        start = f"{day}T00:00:00.000Z"
+        end = f"{day}T23:59:59.999Z"
+        limit = max(1, min(int(limit), 500))
+        offset = max(0, int(offset))
+        with self._lock:
+            total = self._conn.execute(
+                """
+                SELECT COUNT(*) FROM request_logs
+                WHERE created_at >= ? AND created_at <= ?
+                """,
+                (start, end),
+            ).fetchone()[0]
+            rows = self._conn.execute(
+                """
+                SELECT id, created_at, account_id, email, model, path,
+                       status_code, duration_ms, input_tokens, output_tokens,
+                       cached_tokens, total_tokens, ok
+                FROM request_logs
+                WHERE created_at >= ? AND created_at <= ?
+                ORDER BY id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (start, end, limit, offset),
+            ).fetchall()
+        return {
+            "date": day,
+            "total": int(total),
+            "limit": limit,
+            "offset": offset,
+            "requests": [dict(r) for r in rows],
+        }
 
     def ids_by_filter(self, mode: str) -> list[str]:
         mapping = {

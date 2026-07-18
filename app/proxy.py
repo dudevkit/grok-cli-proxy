@@ -80,6 +80,359 @@ class UpstreamProxy:
             return "dead"
         return None
 
+    @staticmethod
+    def _parse_usage(usage: dict[str, Any] | None) -> dict[str, int]:
+        if not isinstance(usage, dict):
+            return {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "total_tokens": 0,
+            }
+        inp = int(
+            usage.get("prompt_tokens")
+            or usage.get("input_tokens")
+            or 0
+        )
+        out = int(
+            usage.get("completion_tokens")
+            or usage.get("output_tokens")
+            or 0
+        )
+        total = int(usage.get("total_tokens") or 0)
+        cached = 0
+        details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+        if isinstance(details, dict):
+            cached = int(details.get("cached_tokens") or details.get("cache_read_input_tokens") or 0)
+        if not cached:
+            cached = int(
+                usage.get("cached_tokens")
+                or usage.get("cache_read_input_tokens")
+                or 0
+            )
+        if total <= 0:
+            total = inp + out
+        return {
+            "input_tokens": max(0, inp),
+            "output_tokens": max(0, out),
+            "cached_tokens": max(0, cached),
+            "total_tokens": max(0, total),
+        }
+
+    def _record_usage(
+        self,
+        acc: dict[str, Any],
+        *,
+        model: str | None,
+        path: str,
+        status: int,
+        duration_ms: float,
+        usage: dict[str, int] | None = None,
+        ok: bool = True,
+    ) -> None:
+        u = usage or {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "total_tokens": 0,
+        }
+        try:
+            if ok and u.get("total_tokens", 0) > 0:
+                self.db.add_tokens_used(acc["id"], int(u["total_tokens"]))
+            self.db.log_request(
+                account_id=acc.get("id"),
+                email=acc.get("email"),
+                model=model,
+                path=f"/{path.lstrip('/')}",
+                status_code=status,
+                duration_ms=duration_ms,
+                input_tokens=u.get("input_tokens", 0),
+                output_tokens=u.get("output_tokens", 0),
+                cached_tokens=u.get("cached_tokens", 0),
+                total_tokens=u.get("total_tokens", 0),
+                ok=ok,
+            )
+        except Exception:
+            log.exception("failed to record usage account=%s", acc.get("email"))
+
+    @staticmethod
+    def _strip_data_url(value: Any) -> str:
+        raw = str(value or "").strip()
+        if raw.startswith("data:") and "," in raw:
+            return raw.split(",", 1)[1]
+        return raw
+
+    @classmethod
+    def extract_generated_images(cls, response: dict[str, Any] | None) -> list[str]:
+        images: list[str] = []
+        if not isinstance(response, dict):
+            return images
+        for item in response.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "image_generation_call":
+                continue
+            raw = item.get("result") or item.get("image") or ""
+            if isinstance(raw, dict):
+                raw = (
+                    raw.get("b64_json")
+                    or raw.get("base64")
+                    or raw.get("data")
+                    or ""
+                )
+            raw = cls._strip_data_url(raw)
+            if raw:
+                images.append(raw)
+        return images
+
+    @staticmethod
+    def normalize_usage(usage: dict[str, Any] | None) -> dict[str, int]:
+        usage = usage if isinstance(usage, dict) else {}
+        tin = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        tout = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        total = int(usage.get("total_tokens") or 0) or (tin + tout)
+        return {
+            "input_tokens": tin,
+            "output_tokens": tout,
+            "prompt_tokens": tin,
+            "completion_tokens": tout,
+            "total_tokens": total,
+        }
+
+    def _build_image_upstream_body(self, body: dict[str, Any]) -> dict[str, Any]:
+        prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="prompt is required")
+        if len(prompt) > 4000:
+            raise HTTPException(status_code=400, detail="prompt too long (max 4000)")
+
+        try:
+            n = int(body.get("n") or 1)
+        except (TypeError, ValueError):
+            n = 1
+        n = max(1, min(n, 4))
+
+        model = str(body.get("model") or "grok-4.5").strip() or "grok-4.5"
+        # Free CLI path uses chat model + image_generation tool
+        if model in ("grok-imagine", "grok-2-image", "dall-e-3", "dall-e-2"):
+            model = "grok-4.5"
+
+        tool: dict[str, Any] = {"type": "image_generation"}
+        size = body.get("size")
+        quality = body.get("quality")
+        if size:
+            tool["size"] = size
+        if quality:
+            tool["quality"] = quality
+
+        text = f"Generate an image: {prompt}. Use the image_generation tool."
+        negative = str(body.get("negative_prompt") or "").strip()
+        if negative:
+            text += f" Avoid: {negative}."
+
+        upstream = {
+            "model": model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                }
+            ],
+            "tools": [tool],
+            "stream": False,
+            "reasoning": {"effort": "low"},
+            "max_output_tokens": 1024,
+        }
+        return {"upstream": upstream, "n": n, "model": model, "prompt": prompt}
+
+    async def generate_images(
+        self,
+        body: dict[str, Any],
+        *,
+        refresh_service=None,
+        round_robin: bool = True,
+    ) -> dict[str, Any]:
+        """OpenAI-like images API via Grok CLI free responses + image_generation tool."""
+        parsed = self._build_image_upstream_body(body)
+        upstream_body = parsed["upstream"]
+        n = int(parsed["n"])
+        model = parsed["model"]
+        timeout = float(
+            self.config.get("image_timeout_sec")
+            or max(float(self.config.get("request_timeout_sec", 120)), 180)
+        )
+        url = f"{self.base}/responses"
+        generated: list[str] = []
+        total_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        last_err: str | None = None
+        max_attempts = max(n * 4, 4)
+        attempt = 0
+        tried: set[str] = set()
+
+        while len(generated) < n and attempt < max_attempts:
+            attempt += 1
+            acc = self.db.pick_active_round_robin()
+            if not acc:
+                break
+            if acc["id"] in tried and len(tried) >= max(1, self.db.stats().get("active_enabled", 0) or 1):
+                # allow reuse after cycling full pool once
+                tried.clear()
+            tried.add(acc["id"])
+
+            t0 = time.time()
+            email_acc = acc.get("email", "?")
+            headers = self._headers(acc, model=model)
+            # Prefer grok-shell identifier for image tool path (per free-image guide)
+            headers["x-grok-client-identifier"] = self.config.get(
+                "image_client_identifier",
+                self.config.get("client_identifier", "grok-shell"),
+            )
+            try:
+                resp = await self.http.post(
+                    url,
+                    headers=headers,
+                    json=upstream_body,
+                    timeout=timeout,
+                )
+                ms = (time.time() - t0) * 1000
+                text = resp.text
+                if resp.status_code >= 400:
+                    err_cls = self._classify_error(resp.status_code, text)
+                    if resp.status_code == 429:
+                        if self.bc:
+                            self.bc.log(
+                                "proxy_err",
+                                "image rate limited",
+                                method="POST",
+                                path="/images/generations",
+                                status=429,
+                                account=email_acc,
+                                duration_ms=ms,
+                                model=model,
+                            )
+                        await backoff_sleep(attempt, max_sec=30)
+                        continue
+                    if err_cls == "exhausted":
+                        self.db.mark_status(
+                            acc["id"], "exhausted", error=f"{resp.status_code}: {text[:296]}"
+                        )
+                        if self.bc:
+                            self.bc.log(
+                                "proxy_err",
+                                f"image exhausted: {email_acc}",
+                                method="POST",
+                                path="/images/generations",
+                                status=403,
+                                account=email_acc,
+                                duration_ms=ms,
+                                model=model,
+                            )
+                        continue
+                    if err_cls == "dead":
+                        self.db.mark_status(
+                            acc["id"], "dead", error=f"{resp.status_code}: {text[:296]}"
+                        )
+                        continue
+                    if err_cls == "auth" and refresh_service is not None:
+                        await refresh_service.refresh_one(acc)
+                        continue
+                    last_err = text[:300] or f"upstream {resp.status_code}"
+                    self.db.mark_status(
+                        acc["id"], "error", error=f"{resp.status_code}: {text[:296]}"
+                    )
+                    continue
+
+                try:
+                    js = resp.json()
+                except Exception:
+                    last_err = "invalid upstream json"
+                    continue
+
+                images = self.extract_generated_images(js)
+                usage = self.normalize_usage(js.get("usage") if isinstance(js, dict) else None)
+                for k in total_usage:
+                    total_usage[k] += int(usage.get(k, 0) or 0)
+
+                if not images:
+                    last_err = "no image_generation_call in response"
+                    if self.bc:
+                        self.bc.log(
+                            "proxy_err",
+                            last_err,
+                            method="POST",
+                            path="/images/generations",
+                            status=502,
+                            account=email_acc,
+                            duration_ms=ms,
+                            model=model,
+                        )
+                    # don't kill account for empty tool result; try next
+                    continue
+
+                generated.extend(images)
+                self.db.mark_success(acc["id"])
+                self._record_usage(
+                    acc,
+                    model=model,
+                    path="images/generations",
+                    status=200,
+                    duration_ms=ms,
+                    usage=self._parse_usage(js.get("usage") if isinstance(js, dict) else None),
+                    ok=True,
+                )
+                if self.bc:
+                    self.bc.log(
+                        "proxy_ok",
+                        f"image gen +{len(images)}",
+                        method="POST",
+                        path="/images/generations",
+                        status=200,
+                        account=email_acc,
+                        duration_ms=ms,
+                        model=model,
+                        tokens=usage.get("total_tokens"),
+                    )
+            except httpx.TimeoutException:
+                last_err = "upstream timeout"
+                self.db.mark_status(acc["id"], "error", error="image timeout")
+                if self.bc:
+                    self.bc.log(
+                        "proxy_err",
+                        "image timeout",
+                        method="POST",
+                        path="/images/generations",
+                        status=504,
+                        account=email_acc,
+                        model=model,
+                    )
+                continue
+            except Exception as e:
+                last_err = str(e)
+                self.db.mark_status(acc["id"], "error", error=str(e))
+                log.exception("image generation error account=%s", acc.get("email"))
+                continue
+
+        if not generated:
+            if last_err and "timeout" in (last_err or "").lower():
+                raise HTTPException(status_code=504, detail=last_err)
+            raise HTTPException(
+                status_code=503,
+                detail=last_err or "All active accounts failed to generate image",
+            )
+
+        return {
+            "created": int(time.time()),
+            "data": [{"b64_json": img} for img in generated[:n]],
+            "usage": total_usage,
+            "model": model,
+        }
+
     async def forward(
         self,
         request: Request,
@@ -192,28 +545,47 @@ class UpstreamProxy:
                             media_type="application/json",
                         )
 
+                    last_usage: dict[str, int] = {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cached_tokens": 0,
+                        "total_tokens": 0,
+                    }
+
                     async def gen():
                         try:
                             async for chunk in upstream.aiter_bytes():
                                 try:
                                     text = chunk.decode("utf-8")
-                                    if "usage" in text and "total_tokens" in text:
+                                    if "usage" in text:
                                         for line in text.splitlines():
                                             if line.startswith("data: "):
                                                 try:
                                                     data = json.loads(line[6:])
-                                                    if "usage" in data and "total_tokens" in data["usage"]:
-                                                        self.db.add_tokens_used(acc["id"], int(data["usage"]["total_tokens"]))
-                                                except:
+                                                    if isinstance(data, dict) and data.get("usage"):
+                                                        parsed = self._parse_usage(data.get("usage"))
+                                                        if parsed.get("total_tokens") or parsed.get("input_tokens") or parsed.get("output_tokens"):
+                                                            last_usage.update(parsed)
+                                                except Exception:
                                                     pass
-                                except:
+                                except Exception:
                                     pass
                                 yield chunk
                             self.db.mark_success(acc["id"])
+                            ms_done = (time.time() - t0) * 1000
+                            self._record_usage(
+                                acc,
+                                model=model,
+                                path=path,
+                                status=upstream.status_code,
+                                duration_ms=ms_done,
+                                usage=last_usage,
+                                ok=True,
+                            )
+                            log_req(200, ms_done)
                         finally:
                             await upstream.aclose()
 
-                    log_req(200, (time.time() - t0) * 1000)
                     return StreamingResponse(
                         gen(),
                         status_code=upstream.status_code,
@@ -263,14 +635,29 @@ class UpstreamProxy:
                         ),
                     )
                     
+                usage = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cached_tokens": 0,
+                    "total_tokens": 0,
+                }
                 try:
                     js = json.loads(text)
-                    if "usage" in js and "total_tokens" in js["usage"]:
-                        self.db.add_tokens_used(acc["id"], int(js["usage"]["total_tokens"]))
-                except:
+                    if isinstance(js, dict) and js.get("usage"):
+                        usage = self._parse_usage(js.get("usage"))
+                except Exception:
                     pass
-                    
+
                 self.db.mark_success(acc["id"])
+                self._record_usage(
+                    acc,
+                    model=model,
+                    path=path,
+                    status=upstream.status_code,
+                    duration_ms=ms,
+                    usage=usage,
+                    ok=True,
+                )
                 log_req(upstream.status_code, ms)
                 return Response(
                     content=raw,

@@ -62,6 +62,7 @@ function showLogin(msg) {
   if (root) root.style.display = "none";
   if (msg && $("loginError")) $("loginError").textContent = msg;
   if (logTimer) { clearInterval(logTimer); logTimer = null; }
+  if (typeof stopUsagePolling === "function") stopUsagePolling();
 }
 
 function showApp() {
@@ -632,12 +633,467 @@ tbody.addEventListener("click", async (e) => {
 
 $("clearLog").onclick = () => {
   logContent.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-tertiary)">Log cleared</div>';
-  fetch("/api/events/clear", { method: "POST" }).catch(() => {});
+  logCache = [];
+  fetch("/api/events/clear", { method: "POST", credentials: "same-origin", headers: authHeaders() }).catch(() => {});
 };
+
+// Activity rail collapse
+const ACTIVITY_LS_KEY = "gcp_live_log_collapsed";
+function setActivityCollapsed(collapsed) {
+  const rail = $("activityRail");
+  const btn = $("toggleActivity");
+  if (!rail) return;
+  rail.classList.toggle("collapsed", !!collapsed);
+  if (btn) btn.title = collapsed ? "Expand activity" : "Collapse activity";
+  try { localStorage.setItem(ACTIVITY_LS_KEY, collapsed ? "1" : "0"); } catch {}
+}
+function initActivityRail() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(ACTIVITY_LS_KEY) === "1"; } catch {}
+  setActivityCollapsed(collapsed);
+  const btn = $("toggleActivity");
+  if (btn) {
+    btn.onclick = () => {
+      const rail = $("activityRail");
+      setActivityCollapsed(!rail.classList.contains("collapsed"));
+    };
+  }
+}
+
+// ---- Usage page ----
+let currentPage = "setup";
+let usageTab = "overview";
+let usageTimer = null;
+
+function fmtNum(n) {
+  const v = Number(n) || 0;
+  return v.toLocaleString("en-US");
+}
+function fmtTokensShort(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(v % 1_000_000 === 0 ? 0 : 1) + "M";
+  if (v >= 1_000) return (v / 1_000).toFixed(v % 1_000 === 0 ? 0 : 1) + "k";
+  return String(v);
+}
+function fmtWhen(iso) {
+  if (!iso) return "-";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(11, 16) || iso;
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  } catch {
+    return String(iso).slice(11, 16) || "-";
+  }
+}
+function relativeWhen(iso) {
+  if (!iso) return "-";
+  try {
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return fmtWhen(iso);
+    const sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    if (sec < 60) return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return fmtWhen(iso);
+  } catch {
+    return fmtWhen(iso);
+  }
+}
+
+function renderUsageChart(hourly) {
+  const el = $("usageChart");
+  if (!el) return;
+  const data = Array.isArray(hourly) ? hourly : [];
+  const values = data.map((h) => Number(h.tokens) || 0);
+  const maxRaw = Math.max(...values, 0);
+  const fixedTicks = [400_000, 800_000, 1_200_000, 1_600_000];
+  let yMax = 1_600_000;
+  if (maxRaw > yMax) {
+    yMax = Math.ceil(maxRaw / 400_000) * 400_000;
+  }
+  const ticks = maxRaw > 1_600_000
+    ? [yMax * 0.25, yMax * 0.5, yMax * 0.75, yMax]
+    : fixedTicks;
+
+  if (maxRaw === 0 && values.every((v) => v === 0)) {
+    el.innerHTML = `<div class="chart-empty">No token usage recorded today</div>`;
+    if ($("usageChartMeta")) $("usageChartMeta").textContent = "Peak 0";
+    return;
+  }
+
+  const W = 900;
+  const H = 300;
+  const padL = 52;
+  const padR = 16;
+  const padT = 16;
+  const padB = 30;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const n = Math.max(data.length, 24);
+  const xAt = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = (v) => padT + plotH - (Math.min(v, yMax) / yMax) * plotH;
+
+  const grid = ticks.map((t) => {
+    const y = yAt(t);
+    return `<line class="chart-grid-line" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"/>
+      <text class="chart-axis-label" x="${padL - 8}" y="${y + 3}" text-anchor="end">${fmtTokensShort(t)}</text>`;
+  }).join("");
+
+  const baseY = padT + plotH;
+  const pts = values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+  const areaPts = `${xAt(0)},${baseY} ${pts} ${xAt(n - 1)},${baseY}`;
+  const xLabels = [0, 6, 12, 18, 23].map((h) => {
+    const i = Math.min(h, n - 1);
+    return `<text class="chart-axis-label" x="${xAt(i)}" y="${H - 8}" text-anchor="middle">${String(h).padStart(2, "0")}:00</text>`;
+  }).join("");
+  const dots = values.map((v, i) =>
+    v > 0 ? `<circle class="chart-dot" cx="${xAt(i)}" cy="${yAt(v)}" r="3"/>` : ""
+  ).join("");
+
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+    ${grid}
+    <line class="chart-grid-line" x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}"/>
+    <polygon class="chart-area" points="${areaPts}"/>
+    <polyline class="chart-line" points="${pts}"/>
+    ${dots}
+    ${xLabels}
+  </svg>`;
+  if ($("usageChartMeta")) $("usageChartMeta").textContent = `Peak ${fmtTokensShort(maxRaw)}`;
+}
+
+function renderUsageRecent(rows) {
+  const el = $("usageRecent");
+  if (!el) return;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    el.innerHTML = `<div class="empty-state">No requests yet today</div>`;
+    return;
+  }
+  el.innerHTML = list.map((r) => {
+    const model = r.model || "—";
+    const inn = fmtNum(r.input_tokens);
+    const out = fmtNum(r.output_tokens);
+    return `<div class="recent-row">
+      <span class="recent-model">${escapeHtml(model)}</span>
+      <span class="recent-io">${inn} in / ${out} out</span>
+      <span class="recent-when">${relativeWhen(r.created_at)}</span>
+    </div>`;
+  }).join("");
+}
+
+async function loadUsageOverview() {
+  const data = await api("/api/usage/overview");
+  if ($("usageTotalReq")) $("usageTotalReq").textContent = fmtNum(data.total_requests);
+  if ($("usageInputTok")) $("usageInputTok").textContent = fmtNum(data.input_tokens);
+  if ($("usageCachedTok")) $("usageCachedTok").textContent = fmtNum(data.cached_tokens);
+  if ($("usageOutputTok")) $("usageOutputTok").textContent = fmtNum(data.output_tokens);
+  renderUsageChart(data.hourly || []);
+  renderUsageRecent(data.recent || []);
+  return data;
+}
+
+async function loadUsageDetails() {
+  const body = $("usageDetailsBody");
+  const msg = $("usageDetailsMsg");
+  if (!body) return;
+  body.innerHTML = `<tr><td colspan="8" class="empty-state">Loading...</td></tr>`;
+  try {
+    const data = await api("/api/usage/requests?limit=200");
+    const rows = data.requests || [];
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="8"><div class="empty-state">No requests yet today</div></td></tr>`;
+      if (msg) msg.textContent = "";
+      return;
+    }
+    body.innerHTML = rows.map((r) => `
+      <tr>
+        <td class="mono-text">${fmtWhen(r.created_at)}</td>
+        <td class="mono-text">${escapeHtml(r.model || "—")}</td>
+        <td class="text-right mono-text">${fmtNum(r.input_tokens)}</td>
+        <td class="text-right mono-text">${fmtNum(r.cached_tokens)}</td>
+        <td class="text-right mono-text">${fmtNum(r.output_tokens)}</td>
+        <td class="text-right mono-text">${fmtNum(r.total_tokens)}</td>
+        <td class="acc-meta">${escapeHtml(r.email || "—")}</td>
+        <td class="text-center">${r.ok ? '<span class="on-off-tag on">OK</span>' : `<span class="on-off-tag off">${r.status_code || "ERR"}</span>`}</td>
+      </tr>
+    `).join("");
+    if (msg) msg.textContent = `${rows.length} of ${data.total || rows.length} requests`;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" class="err-text">${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+}
+
+function setUsageTab(tab) {
+  usageTab = tab === "details" ? "details" : "overview";
+  document.querySelectorAll("[data-usage-tab]").forEach((btn) => {
+    btn.classList.toggle("active", btn.getAttribute("data-usage-tab") === usageTab);
+  });
+  if ($("usageOverview")) $("usageOverview").classList.toggle("active", usageTab === "overview");
+  if ($("usageDetails")) $("usageDetails").classList.toggle("active", usageTab === "details");
+  if (usageTab === "details") loadUsageDetails().catch(() => {});
+  else loadUsageOverview().catch(() => {});
+}
+
+function stopUsagePolling() {
+  if (usageTimer) {
+    clearInterval(usageTimer);
+    usageTimer = null;
+  }
+}
+function startUsagePolling() {
+  stopUsagePolling();
+  usageTimer = setInterval(() => {
+    if (currentPage !== "usage") return;
+    if (usageTab === "details") loadUsageDetails().catch(() => {});
+    else loadUsageOverview().catch(() => {});
+  }, 20000);
+}
+
+// ---- Image Generation page ----
+let imgHistory = [];
+
+function detectImageMime(b64) {
+  try {
+    const s = String(b64 || "").replace(/\s/g, "");
+    if (s.startsWith("/9j/")) return "image/jpeg";
+    if (s.startsWith("iVBOR")) return "image/png";
+    if (s.startsWith("R0lGOD")) return "image/gif";
+    if (s.startsWith("UklGR")) return "image/webp";
+  } catch {}
+  return "image/jpeg";
+}
+
+function buildImagePayload() {
+  const prompt = ($("imgPrompt")?.value || "").trim();
+  const model = $("imgModel")?.value || "grok-4.5";
+  const size = $("imgSize")?.value || "1024x1024";
+  const n = Math.max(1, Math.min(4, parseInt($("imgN")?.value || "1", 10) || 1));
+  const quality = $("imgQuality")?.value || "standard";
+  const negative = ($("imgNegative")?.value || "").trim();
+  const payload = {
+    model,
+    prompt,
+    n,
+    size,
+    quality,
+    response_format: "b64_json",
+  };
+  if (negative) payload.negative_prompt = negative;
+  return payload;
+}
+
+function refreshImagePayloadPreview() {
+  const pre = $("imgPayloadPreview");
+  if (!pre) return;
+  try {
+    pre.textContent = JSON.stringify(buildImagePayload(), null, 2);
+  } catch {
+    pre.textContent = "{}";
+  }
+}
+
+function renderImageGallery() {
+  const el = $("imgGallery");
+  const meta = $("imgResultMeta");
+  if (!el) return;
+  if (meta) meta.textContent = `${imgHistory.length} image${imgHistory.length === 1 ? "" : "s"}`;
+  if (!imgHistory.length) {
+    el.innerHTML = `
+      <div class="img-empty">
+        <div class="img-empty-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </div>
+        <div class="empty-state" style="padding:8px 0 0;margin:0">No images yet. Write a prompt and generate.</div>
+      </div>`;
+    return;
+  }
+  el.innerHTML = imgHistory.map((item, idx) => {
+    const statusCls = item.status === "ok" ? "ok" : item.status === "err" ? "err" : "pending";
+    const statusLabel = item.status === "ok" ? "ready" : item.status === "err" ? "error" : "queued";
+    const thumb = item.url
+      ? `<img src="${escapeHtml(item.url)}" alt="generated" loading="lazy" />`
+      : `<div class="img-card-placeholder">${item.status === "err" ? escapeHtml(item.error || "Failed") : "No preview"}</div>`;
+    return `
+      <div class="img-card" data-img-idx="${idx}">
+        <div class="img-card-thumb">${thumb}</div>
+        <div class="img-card-meta">
+          <span class="img-status-badge ${statusCls}">${statusLabel}</span>
+          <div class="img-card-prompt" title="${escapeHtml(item.prompt || "")}">${escapeHtml(item.prompt || "—")}</div>
+          <div class="img-card-sub">${escapeHtml(item.model || "")} · ${escapeHtml(item.size || "")}</div>
+          <div class="img-card-actions">
+            ${item.url ? `<button class="btn btn-ghost btn-sm" data-img-copy="${idx}">Copy URL</button>` : ""}
+            <button class="btn btn-ghost btn-sm" data-img-remove="${idx}">Remove</button>
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function initImagePage() {
+  const fields = ["imgPrompt", "imgModel", "imgSize", "imgN", "imgQuality", "imgNegative"];
+  fields.forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener("input", refreshImagePayloadPreview);
+    el.addEventListener("change", refreshImagePayloadPreview);
+  });
+  refreshImagePayloadPreview();
+  renderImageGallery();
+
+  const genBtn = $("imgGenerateBtn");
+  if (genBtn) {
+    genBtn.onclick = async () => {
+      const payload = buildImagePayload();
+      const msg = $("imgMsg");
+      if (!payload.prompt) {
+        if (msg) msg.textContent = "Prompt is required";
+        return;
+      }
+      if (msg) msg.textContent = "Generating...";
+      genBtn.disabled = true;
+      const placeholders = [];
+      for (let i = 0; i < payload.n; i++) {
+        const row = {
+          id: `${Date.now()}-${i}`,
+          prompt: payload.prompt,
+          model: payload.model,
+          size: payload.size,
+          quality: payload.quality,
+          status: "pending",
+          url: null,
+          error: null,
+          created_at: new Date().toISOString(),
+        };
+        placeholders.push(row);
+        imgHistory.unshift(row);
+      }
+      renderImageGallery();
+      try {
+        const data = await api("/v1/images/generations", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        const results = Array.isArray(data?.data) ? data.data : [];
+        placeholders.forEach((row, i) => {
+          const item = results[i];
+          if (item && (item.url || item.b64_json)) {
+            row.status = "ok";
+            if (item.url) {
+              row.url = item.url;
+            } else {
+              const b64 = String(item.b64_json || "").replace(/\s/g, "");
+              const mime = detectImageMime(b64);
+              row.url = `data:${mime};base64,${b64}`;
+              row.b64 = b64;
+            }
+            row.revised_prompt = item.revised_prompt || null;
+          } else if (results.length === 0 && i === 0 && data?.error) {
+            row.status = "err";
+            row.error = data.error.message || String(data.error);
+          } else {
+            row.status = "err";
+            row.error = "No image in response";
+          }
+        });
+        if (msg) {
+          const okN = placeholders.filter((r) => r.status === "ok").length;
+          const usage = data?.usage;
+          const usageTxt = usage?.total_tokens ? ` · ${Number(usage.total_tokens).toLocaleString()} tok` : "";
+          msg.textContent = okN
+            ? `Generated ${okN} image${okN === 1 ? "" : "s"}${usageTxt}`
+            : (data?.error?.message || data?.detail || "Generation failed or endpoint unavailable");
+        }
+      } catch (e) {
+        placeholders.forEach((row) => {
+          row.status = "err";
+          row.error = e.message || String(e);
+        });
+        if (msg) msg.textContent = e.message || String(e);
+      } finally {
+        genBtn.disabled = false;
+        renderImageGallery();
+      }
+    };
+  }
+
+  const clearBtn = $("imgClearBtn");
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      if ($("imgPrompt")) $("imgPrompt").value = "";
+      if ($("imgNegative")) $("imgNegative").value = "";
+      if ($("imgMsg")) $("imgMsg").textContent = "";
+      refreshImagePayloadPreview();
+    };
+  }
+
+  const gallery = $("imgGallery");
+  if (gallery) {
+    gallery.addEventListener("click", async (e) => {
+      const copyBtn = e.target.closest("[data-img-copy]");
+      if (copyBtn) {
+        const idx = parseInt(copyBtn.getAttribute("data-img-copy"), 10);
+        const item = imgHistory[idx];
+        if (item?.url) await copyText(item.url, $("imgMsg"), "Image URL copied");
+        return;
+      }
+      const remBtn = e.target.closest("[data-img-remove]");
+      if (remBtn) {
+        const idx = parseInt(remBtn.getAttribute("data-img-remove"), 10);
+        if (!Number.isNaN(idx)) {
+          imgHistory.splice(idx, 1);
+          renderImageGallery();
+        }
+      }
+    });
+  }
+}
+
+function showPage(page) {
+  const allowed = new Set(["setup", "usage", "images"]);
+  currentPage = allowed.has(page) ? page : "setup";
+  const setup = $("pageSetup");
+  const usage = $("pageUsage");
+  const images = $("pageImages");
+  if (setup) setup.classList.toggle("active", currentPage === "setup");
+  if (usage) usage.classList.toggle("active", currentPage === "usage");
+  if (images) images.classList.toggle("active", currentPage === "images");
+  document.querySelectorAll(".nav-item[data-page]").forEach((el) => {
+    el.classList.toggle("active", el.getAttribute("data-page") === currentPage);
+  });
+  try { history.replaceState(null, "", `#${currentPage}`); } catch {}
+  if (currentPage === "usage") {
+    setUsageTab(usageTab);
+    startUsagePolling();
+  } else {
+    stopUsagePolling();
+  }
+  if (currentPage === "images") refreshImagePayloadPreview();
+}
+
+function initNav() {
+  document.querySelectorAll(".nav-item[data-page]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      showPage(el.getAttribute("data-page"));
+    });
+  });
+  document.querySelectorAll("[data-usage-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => setUsageTab(btn.getAttribute("data-usage-tab")));
+  });
+  const reloadBtn = $("reloadUsageDetails");
+  if (reloadBtn) reloadBtn.onclick = () => loadUsageDetails().catch(() => {});
+  initImagePage();
+
+  const hash = (location.hash || "").replace("#", "");
+  if (hash === "usage" || hash === "images") showPage(hash);
+  else showPage("setup");
+}
 
 // Init
 async function bootApp() {
   showApp();
+  initActivityRail();
+  initNav();
   await loadPublic();
   await reload().catch((e) => { console.error(e); });
   await reloadKeys().catch(() => {});
